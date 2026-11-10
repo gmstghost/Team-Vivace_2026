@@ -10,3 +10,6 @@ __pycache__/
 .DS_Store
 Thumbs.db
 .vscode/
+
+# 데이터 도구가 내려받은 원본 (다시 받을 수 있음)
+tools/.cache/

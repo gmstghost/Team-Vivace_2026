@@ -9,29 +9,64 @@ SAFE_Route/
 ├── firebase.json            Firebase Hosting 설정 (public/ 폴더를 배포)
 ├── serve.py                 로컬 개발 서버 (python serve.py)
 ├── tools/
-│   └── fetch_obis_targets.py   OBIS에서 보호 대상 생물 기록을 받아 public/data/에 저장
+│   ├── build_world_data.py     전 세계 해안선·항구 데이터 → public/data/world/
+│   └── fetch_obis_targets.py   OBIS 보호 대상 생물 전 세계 격자 → public/data/obis_targets.json
 └── public/                  ← 배포되는 파일은 전부 여기
     ├── index.html           화면 구조
     ├── css/style.css        디자인
-    ├── data/                fetch_obis_targets.py가 만든 데이터 (앱이 시작할 때 불러옴)
+    ├── data/
+    │   ├── world/land.json      육지 다각형 (Natural Earth 1:10m)
+    │   ├── world/ports.json     항구 약 8천 곳 (UN/LOCODE + Natural Earth)
+    │   └── obis_targets.json    보호 대상 생물 기록 수, 전 세계 약 1.4° 격자
     ├── arduino/
     │   └── safe_route_sensor.ino   아두이노 스케치 (페이지에서 표시·내려받기)
     └── js/
         ├── main.js          진입점: 화면 요소와 계산을 연결
         ├── model/           순수 계산 (DOM 없음, Node로 테스트 가능)
-        │   ├── config.js        상수: 해역 범위, 해안선, 항구
-        │   ├── grid.js          격자와 육지 판정
-        │   ├── occurrences.js   출현 기록: 보호 대상 데이터, CSV, 예시 데이터
+        │   ├── config.js        상수: 격자 크기, 통로 반경, 운하·해협, 빠른 선택 항로
+        │   ├── geo.js           대권 거리, 날짜변경선을 넘는 경도 처리
+        │   ├── grid.js          위도·경도 격자, 바다 덩어리 번호 매기기
+        │   ├── land.js          육지 다각형 → 격자 칠하기, 전 세계 0.25° 격자
+        │   ├── ports.js         항구 목록과 검색
+        │   ├── occurrences.js   출현 기록: OBIS(기본 격자 + 해역별 상세), CSV, 예시 데이터
         │   ├── density.js       1·2단계: 분류군별 커널 밀도 추정, 수온 보정 위험도
         │   ├── pathfinding.js   3단계: A* 탐색
-        │   └── routing.js       기존/AI 항로 계산과 지표 측정
+        │   └── routing.js       해역(통로) 정하기, 기존/AI 항로 계산과 지표 측정
         └── ui/              화면
-            ├── map-view.js      캔버스 해도 그리기
+            ├── map-view.js      캔버스 해도 (메르카토르, 확대·이동)
+            ├── port-picker.js   항구 검색 상자
             ├── results.js       항로 비교 표·막대·요약 문장
             └── arduino.js       Web Serial로 아두이노 센서 읽기
 ```
 
 수식이나 상수를 바꾸려면 `public/js/model/`만 보면 됩니다.
+
+## 전 세계 항로를 찾는 방법
+
+전 세계를 촘촘한 격자 하나로 덮으면 칸이 수억 개라 두 단계로 나눕니다 (`model/routing.js`).
+
+1. **전 세계 0.25° 격자** (약 28 km 칸)에서 두 항구 사이의 대략적인 최단 길을 찾습니다.
+   동쪽 끝과 서쪽 끝이 이어져 있어 태평양 횡단 항로도 날짜변경선을 넘어갑니다.
+2. 그 길 주변 **통로**(반경 50~150 km)만 0.01~0.15° 격자로 다시 나눠, 그 안에서 기존(최단) 항로와 AI 추천 항로를 찾습니다.
+   항로가 짧을수록 격자가 촘촘합니다 (포항→울릉 0.01°, 부산→로테르담 약 0.1°).
+
+보정 규칙:
+
+- 수에즈·파나마·킬 운하와 보스포루스·지브롤터 등 좁은 해협은 `config.js`의 `PASSAGES`를 따라 바다로 뚫어 둡니다.
+- 결빙되는 북극해는 대서양 쪽(그린란드~바렌츠해)만 열어 둡니다 (`ARCTIC_ICE`). 이게 없으면 부산→로테르담이 북극 항로로 나옵니다.
+- 1단계 격자는 칸이 커서 코린트 지협 같은 좁은 육지를 바다로 볼 때가 있습니다. 2단계 통로가 끊기면 끊긴 곳을 막고 1단계를 다시 찾습니다.
+- 항구 좌표가 육지나 좁은 만 안에 있으면 가장 가까운, 서로 이어진 바다 칸에서 출발합니다 (지도에 점선으로 표시).
+
+생물 데이터: 처음에는 미리 받아 둔 전 세계 OBIS 격자(약 1.4° 칸)로 계산하고, 항로가 정해지면 그 해역만 OBIS API에서 촘촘한 격자(해역이 좁으면 약 5 km, 넓으면 약 20~40 km 칸)로 바로 받아 다시 계산합니다. 해역이 아주 넓으면(대양 횡단) 기본 격자를 그대로 씁니다.
+
+## 데이터 다시 만들기
+
+```bash
+python tools/build_world_data.py     # 해안선·항구 (원본은 tools/.cache/에 보관)
+python tools/fetch_obis_targets.py   # OBIS 보호 대상 전 세계 격자
+```
+
+둘 다 표준 라이브러리만 씁니다. 한국어로 보일 항구 이름은 `build_world_data.py`의 `KO_NAMES`, 좌표가 없는 주요 항구는 `MANUAL_COORDS`에 추가합니다.
 
 ## Python 사용자를 위한 JS 대응표
 

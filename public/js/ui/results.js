@@ -9,7 +9,9 @@ const KM_PER_NM = 1.852;
 const pctChange = (a, b) => (b > 0 ? ((a - b) / b) * 100 : 0);
 /** 부호를 붙인 숫자 문자열 (+3.2) */
 const signed = (v, digits) => (v > 0 ? '+' : '') + v.toFixed(digits);
-const kmHtml = (km) => `${km.toFixed(1)} <span class="u">km</span>`;
+/** 거리 표시: 1000 km 이상은 정수에 천 단위 쉼표 */
+const fmtKm = (km) => (km >= 1000 ? Math.round(km).toLocaleString('ko-KR') : km.toFixed(1));
+const kmHtml = (km) => `${fmtKm(km)} <span class="u">km</span>`;
 
 function setBar(id, value, max, text) {
   $(id).style.width = `${(value / max) * 100}%`;
@@ -28,8 +30,8 @@ export function renderResults(old, ai) {
   $('hOld').innerHTML = kmHtml(old.highKm);
   $('hAi').innerHTML = kmHtml(ai.highKm);
   $('hDelta').textContent = old.highKm > 0 ? `${signed(pctChange(ai.highKm, old.highKm), 0)}%` : '–';
-  $('eOld').textContent = old.exposure.toFixed(1);
-  $('eAi').textContent = ai.exposure.toFixed(1);
+  $('eOld').textContent = fmtKm(old.exposure);
+  $('eAi').textContent = fmtKm(ai.exposure);
   $('eDelta').textContent = old.exposure > 0 ? `${signed(pctChange(ai.exposure, old.exposure), 0)}%` : '–';
 
   // 막대: 민감 구역 통과 비율
@@ -56,8 +58,15 @@ export function renderResults(old, ai) {
     const highChange = Math.abs(pctChange(ai.highKm, old.highKm)).toFixed(0);
     const direction = ai.highKm <= old.highKm ? '줄어듭니다' : '늘어납니다';
     headline.innerHTML =
-      `${extraKm.toFixed(1)} km (${(extraKm / KM_PER_NM).toFixed(1)}해리, ` +
+      `${fmtKm(extraKm)} km (${fmtKm(extraKm / KM_PER_NM)}해리, ` +
       `<b class="cost">${signed(pctChange(ai.km, old.km), 1)}%</b>) 더 가는 대신 ` +
       `민감 구역 통과 거리가 <b class="ai">${highChange}% ${direction}</b>.`;
   }
+}
+
+/** 항로를 못 찾았을 때 표와 막대를 비움 */
+export function clearResults() {
+  for (const id of ['dOld', 'dAi', 'dDelta', 'hOld', 'hAi', 'hDelta', 'eOld', 'eAi', 'eDelta']) $(id).textContent = '–';
+  for (const id of ['bHOld', 'bHAi', 'bDOld', 'bDAi']) setBar(id, 0, 1, '');
+  $('headline').textContent = '항로가 없습니다. 다른 항구를 골라 보세요.';
 }

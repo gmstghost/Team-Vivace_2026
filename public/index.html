@@ -15,26 +15,41 @@
 <div class="wrap">
 <header>
   <div>
-    <div class="eyebrow">Team Vivace · 동해 포항–울릉 해역</div>
+    <div class="eyebrow">Team Vivace · 전 세계 항구</div>
     <h1 class="brand">SAFE <span>Route</span></h1>
     <p class="sub">해양 생물 분포로 생태 민감 구역을 찾고, 그 구역을 피해 가는 항로를 계산합니다.</p>
   </div>
-  <div class="row">
-    <label for="port" class="hint">출발 항구</label>
-    <select id="port">
-      <option value="pohang">포항 (영일만)</option>
-      <option value="hupo">후포</option>
-      <option value="mukho">묵호</option>
-    </select>
-    <span class="hint">→ 울릉도 사동항</span>
-  </div>
 </header>
+
+<section class="route" aria-label="항로 선택">
+  <div class="pickers">
+    <div class="picker"><label for="fromPort">출발 항구</label><input id="fromPort" type="text" placeholder="항구 이름·나라·UN/LOCODE"></div>
+    <button type="button" id="swapBtn" class="swap" aria-label="출발·도착 바꾸기" title="출발·도착 바꾸기">⇄</button>
+    <div class="picker"><label for="toPort">도착 항구</label><input id="toPort" type="text" placeholder="항구 이름·나라·UN/LOCODE"></div>
+  </div>
+  <div class="row presets" id="presets"><span class="hint">빠른 선택</span></div>
+  <p class="hint" id="routeMsg" role="status"></p>
+</section>
 
 <div class="main">
   <div class="chart">
-    <div class="mapbox">
-      <canvas id="map" role="img" aria-label="동해 해도: 생태 위험도 지도 위에 기존 최단 항로와 AI 추천 항로 표시"></canvas>
-      <div class="readout" id="readout">지도 위에 커서를 올리면 좌표와 위험도가 보입니다</div>
+    <div class="mapbox" id="mapbox">
+      <canvas id="map" role="img" aria-label="해도: 생태 위험도 지도 위에 기존 최단 항로와 AI 추천 항로 표시. 휠이나 두 손가락으로 확대, 끌어서 이동"></canvas>
+      <div class="readout" id="readout">휠로 확대 · 끌어서 이동 · 항구 점을 눌러 선택</div>
+      <div class="zoom">
+        <button type="button" id="zoomIn" aria-label="확대">+</button>
+        <button type="button" id="zoomOut" aria-label="축소">−</button>
+        <button type="button" id="zoomFit" aria-label="항로에 맞추기" title="항로에 맞추기">⤢</button>
+      </div>
+      <div class="pop" id="portPop" hidden>
+        <div class="pop-name" id="portPopName"></div>
+        <div class="row">
+          <button type="button" id="popFrom">출발로</button>
+          <button type="button" id="popTo">도착으로</button>
+          <button type="button" id="popClose" aria-label="닫기">×</button>
+        </div>
+      </div>
+      <div class="busy-msg" aria-hidden="true">계산 중…</div>
     </div>
     <div class="legend">
       <span class="k"><span class="sw old"></span>기존 항로 (최단)</span>
@@ -43,7 +58,7 @@
       <span class="k"><span class="dot"></span>생물 출현 기록</span>
       <label class="k" for="showPts"><input type="checkbox" id="showPts" checked> 기록 점 보기</label>
     </div>
-    <p class="hint">해안선은 좌표 몇 개로 단순화한 그림입니다. 실제 해도가 아니므로 항해에 쓸 수 없습니다.</p>
+    <p class="hint">해안선은 Natural Earth 1:10m (약 200 m 정밀도), 항구는 UN/LOCODE·Natural Earth 자료입니다. 수심·항로대·통항 규칙을 반영하지 않은 시뮬레이션이므로 실제 항해에 쓸 수 없습니다.</p>
   </div>
 
   <div class="side">
@@ -59,8 +74,8 @@
         <div class="row" id="groupList"></div>
       </fieldset>
       <p class="hint" id="dataMsg">출현 기록 0건</p>
-      <p class="hint">분류군마다 밀도를 따로 0~1로 맞춘 뒤 겹쳐서, 기록이 적은 고래·물범도 기록이 많은 따개비와 같은 무게로 반영됩니다. 기록이 몇 건뿐인 분류군은 그 지점 주변만 민감 구역이 됩니다.</p>
-      <p class="hint">CSV는 위도·경도 열(<code>decimalLatitude</code>, <code>decimalLongitude</code> 또는 <code>위도</code>, <code>경도</code>)만 있으면 됩니다. <code>group</code> 열이 있으면 분류군별로 나눠 계산합니다.</p>
+      <p class="hint">OBIS 데이터는 미리 받아 둔 전 세계 격자(약 1.4° 칸)로 먼저 계산하고, 항로가 정해지면 그 해역만 OBIS에서 촘촘한 격자(약 5~20 km 칸)로 바로 받아 다시 계산합니다. 분류군마다 밀도를 따로 0~1로 맞춘 뒤 겹쳐서, 기록이 적은 고래·물범도 기록이 많은 따개비와 같은 무게로 반영됩니다.</p>
+      <p class="hint">CSV는 위도·경도 열(<code>decimalLatitude</code>, <code>decimalLongitude</code> 또는 <code>위도</code>, <code>경도</code>)만 있으면 됩니다. <code>group</code> 열이 있으면 분류군별로, <code>count</code> 열이 있으면 기록 수를 무게로 씁니다.</p>
     </section>
 
     <section class="sec">
@@ -103,8 +118,10 @@
 </div>
 
 <div class="below">
+  <div class="step"><span class="n">0단계 · 해역</span><h3>전 세계에서 통로를 정합니다</h3>
+    <p>전 세계 바다를 0.25° (약 28 km) 격자로 나눠 두 항구 사이 대략의 최단 길을 찾고, 그 길 주변 통로만 0.01~0.15° 격자로 촘촘하게 다시 나눕니다. 항로가 짧을수록 격자가 촘촘합니다. 수에즈·파나마 운하와 좁은 해협은 직접 뚫어 두고, 결빙되는 북극해는 막아 둡니다.</p></div>
   <div class="step"><span class="n">1단계 · 데이터</span><h3>출현 기록을 격자에 모읍니다</h3>
-    <p>바다를 0.02° (약 2 km) 격자로 나누고, 생물 출현 기록 하나하나를 주변 격자에 퍼뜨려 서식 밀도를 추정합니다 (가우시안 커널 밀도 추정, 반경 약 7 km).</p></div>
+    <p>생물 출현 기록을 주변 격자에 퍼뜨려 서식 밀도를 추정합니다 (가우시안 커널 밀도 추정, 반경 약 7.5 km, 격자 자료는 칸 크기만큼 넓힘). 기록 수가 많은 칸은 1 + ln(기록 수)만큼 무게를 줍니다.</p></div>
   <div class="step"><span class="n">2단계 · 위험도</span><h3>수온으로 민감도를 보정합니다</h3>
     <p><code>위험도 = 서식 밀도 × (0.4 + 0.6 × e^−((수온 − 적정)/5)²)</code><br>수온이 산란 적정 수온과 같으면 서식 밀도가 그대로 위험도가 되고, 멀어지면 최대 60% 낮아집니다.</p></div>
   <div class="step"><span class="n">3단계 · 항로</span><h3>A*로 비용이 가장 작은 길을 찾습니다</h3>
@@ -135,7 +152,7 @@
   </div>
 </details>
 
-<footer>데이터 출처: OBIS (obis.org) 해양 생물 분포 데이터. 보호 대상 기록은 <span id="dataDate">OBIS에서 받은</span> 출현 기록이며, 조사가 이뤄진 곳만 기록되므로 기록이 없는 곳이 생물이 없는 곳은 아닙니다. "예시 데이터"는 동작을 보여 주려고 만든 가상 값입니다.</footer>
+<footer>데이터 출처: OBIS (obis.org) 해양 생물 분포 데이터, Natural Earth (naturalearthdata.com) 해안선·주요 항구, UN/LOCODE (unece.org) 항구 목록. 보호 대상 기록은 <span id="dataDate">OBIS에서 받은</span> 출현 기록이며, 조사가 이뤄진 곳만 기록되므로 기록이 없는 곳이 생물이 없는 곳은 아닙니다. "예시 데이터"는 동작을 보여 주려고 만든 가상 값입니다.</footer>
 </div>
 </body>
 </html>

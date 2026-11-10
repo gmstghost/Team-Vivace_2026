@@ -33,7 +33,8 @@ header{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:fle
 /* 해도 */
 .chart{display:flex;flex-direction:column;gap:10px;min-width:0}
 .mapbox{position:relative;background:var(--abyss);border:1px solid var(--line);border-radius:6px;overflow:hidden}
-#map{display:block;width:100%;touch-action:pan-y;cursor:crosshair}
+#map{display:block;width:100%;touch-action:none;cursor:grab}
+#map.dragging{cursor:grabbing}
 .readout{position:absolute;left:10px;top:10px;max-width:calc(100% - 20px);font-family:var(--mono);font-size:12px;color:var(--ink);
   background:rgba(6,20,42,.82);border:1px solid var(--line);border-radius:4px;padding:4px 8px;pointer-events:none}
 .legend{display:flex;flex-wrap:wrap;gap:8px 20px;align-items:center;color:var(--mute);font-size:13px}
@@ -90,8 +91,9 @@ td .u{color:var(--mute);font-size:12px}
 @media (prefers-reduced-motion:reduce){.bar .fill{transition:none}}
 
 /* 아래 설명 */
-.below{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:24px;border-top:1px solid var(--line);padding-top:24px}
-@media (max-width:900px){.below{grid-template-columns:minmax(0,1fr)}}
+.below{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:24px;border-top:1px solid var(--line);padding-top:24px}
+@media (max-width:1100px){.below{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media (max-width:640px){.below{grid-template-columns:minmax(0,1fr)}}
 .step{display:flex;flex-direction:column;gap:6px;min-width:0}
 .step .n{font-family:var(--mono);font-size:12px;color:var(--sonar);letter-spacing:.06em}
 .step h3{font-size:17px;font-weight:700}
@@ -118,3 +120,40 @@ a{color:var(--sonar)}
 .chip:focus-within{outline:2px solid var(--sonar);outline-offset:2px}
 .chip .n{font-family:var(--mono);font-size:12px;color:var(--mute)}
 .chip input{accent-color:var(--sonar);margin:0}
+
+/* 항로 선택 */
+.route{display:flex;flex-direction:column;gap:10px;margin-top:-8px}
+.pickers{display:grid;grid-template-columns:minmax(0,1fr) auto minmax(0,1fr);gap:10px;align-items:end;max-width:860px}
+.picker{position:relative;display:flex;flex-direction:column;gap:4px;min-width:0}
+.picker label{font-size:13px;color:var(--mute)}
+.picker input{font:inherit;font-size:15px;color:var(--ink);background:var(--panel);border:1px solid var(--line);border-radius:5px;padding:8px 11px;width:100%;min-width:0}
+.picker input:hover{border-color:var(--sonar)}
+.picker input:focus{outline:2px solid var(--sonar);outline-offset:1px;border-color:var(--sonar)}
+.swap{padding:7px 11px;font-size:16px;line-height:1.2}
+@media (max-width:560px){.pickers{grid-template-columns:minmax(0,1fr)}.swap{justify-self:start}}
+.suggest{position:absolute;z-index:20;top:100%;left:0;right:0;margin:4px 0 0;padding:4px;list-style:none;max-height:340px;overflow-y:auto;
+  background:var(--panel);border:1px solid var(--sonar);border-radius:6px;box-shadow:0 10px 30px rgba(0,0,0,.45)}
+.suggest li{display:flex;justify-content:space-between;align-items:baseline;gap:12px;padding:6px 9px;border-radius:4px;cursor:pointer}
+.suggest li .nm{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.suggest li .meta{flex:none;font-family:var(--mono);font-size:11.5px;color:var(--mute)}
+.suggest li.major .nm{font-weight:600}
+.suggest li.on{background:var(--line)}
+.suggest li.empty{color:var(--mute);cursor:default}
+.presets{gap:6px}
+.presets .hint{margin-right:4px}
+button.preset{font-size:13px;padding:4px 10px;border-radius:99px}
+.hint.err{color:var(--warn)}
+
+/* 지도 위 조작 */
+.zoom{position:absolute;right:10px;top:10px;display:flex;flex-direction:column;gap:4px}
+.zoom button{width:32px;height:32px;padding:0;font-size:17px;line-height:1;background:rgba(16,43,82,.9)}
+.readout{max-width:calc(100% - 66px)}
+.pop{position:absolute;z-index:10;background:var(--panel);border:1px solid var(--sonar);border-radius:6px;padding:8px 10px;
+  display:flex;flex-direction:column;gap:6px;box-shadow:0 8px 24px rgba(0,0,0,.45);max-width:calc(100% - 16px)}
+.pop[hidden]{display:none}
+.pop-name{font-weight:600;font-size:14px}
+.pop button{font-size:13px;padding:4px 10px}
+.busy-msg{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);font-family:var(--mono);font-size:13px;
+  background:rgba(6,20,42,.88);border:1px solid var(--sonar);border-radius:4px;padding:6px 12px;pointer-events:none;opacity:0;transition:opacity .15s}
+.mapbox.busy .busy-msg{opacity:1}
+@media (prefers-reduced-motion:reduce){.busy-msg{transition:none}}
