@@ -5,12 +5,40 @@ import { BOUNDS, CELL_DEG, KDE_SIGMA_DEG } from './config.js';
 import { N, NX, NY, landMask } from './grid.js';
 
 /**
- * 출현 기록을 가우시안 커널로 격자에 퍼뜨려 0~1 서식 밀도를 만듦.
- * 바다 칸 상위 2% 값을 1로 맞추고 그 이상은 1로 자릅니다.
- * @param {number[][]} points [경도, 위도] 목록
+ * 분류군별 서식 밀도를 각각 0~1로 맞춘 뒤, 칸마다 가장 큰 값을 씀.
+ *
+ * 기록을 한데 모아 밀도를 내면 기록이 많은 분류군(따개비 수백 건)이
+ * 기록이 적은 분류군(물범 2건)을 덮어 버리므로, 분류군마다 따로 정규화합니다.
+ * 어느 한 보호 대상이라도 밀집한 곳이면 민감 구역이 됩니다.
+ *
+ * @param {Array} points [경도, 위도, 분류군?] 목록
+ * @param {Set<string>|null} groups 쓸 분류군 (null이면 전부)
  * @returns {Float32Array} 길이 N
  */
-export function buildDensity(points) {
+export function buildDensity(points, groups = null) {
+  const byGroup = new Map();
+  for (const p of points) {
+    const g = p[2] || '';
+    if (groups && !groups.has(g)) continue;
+    if (!byGroup.has(g)) byGroup.set(g, []);
+    byGroup.get(g).push(p);
+  }
+  if (byGroup.size === 1) return groupDensity([...byGroup.values()][0]);
+
+  const combined = new Float32Array(N);
+  for (const groupPoints of byGroup.values()) {
+    const d = groupDensity(groupPoints);
+    for (let k = 0; k < N; k++) if (d[k] > combined[k]) combined[k] = d[k];
+  }
+  return combined;
+}
+
+/**
+ * 한 분류군의 출현 기록을 가우시안 커널로 격자에 퍼뜨려 0~1 서식 밀도를 만듦.
+ * 바다 칸 상위 2% 값을 1로 맞추고 그 이상은 1로 자릅니다.
+ * @returns {Float32Array} 길이 N
+ */
+function groupDensity(points) {
   const density = new Float32Array(N);
   const sigma = KDE_SIGMA_DEG / CELL_DEG; // 칸 단위
   const radius = Math.ceil(3 * sigma);

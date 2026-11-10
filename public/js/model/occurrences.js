@@ -1,13 +1,15 @@
 /**
- * 생물 출현 기록 불러오기: 예시(가상) 데이터, CSV 파일, OBIS API.
+ * 생물 출현 기록 불러오기: 예시(가상) 데이터, CSV 파일, OBIS 보호 대상 데이터.
  *
- * 출현 기록은 [경도, 위도] 배열의 배열로 다룹니다.
+ * 출현 기록 하나는 [경도, 위도, 분류군] 배열입니다. 분류군이 없으면 ''.
+ * 분류군별로 따로 밀도를 계산하므로 (density.js) 기록 수가 적은 분류군도 묻히지 않습니다.
  */
 import { BOUNDS, SAMPLE_SEED } from './config.js';
-import { cellOf, landMask } from './grid.js';
+import { cellOf, nearSeaMask } from './grid.js';
 
-const OBIS_URL = 'https://api.obis.org/v3/occurrence';
-const OBIS_PAGE_SIZE = 5000;
+/** tools/fetch_obis_targets.py 가 만드는 파일 */
+const TARGET_CSV_URL = 'data/obis_targets.csv';
+const TARGET_META_URL = 'data/obis_targets.meta.json';
 
 /** 시드 고정 난수 (mulberry32). Python의 random.Random(seed).random()에 해당 */
 function seededRandom(seed) {
@@ -49,11 +51,11 @@ export function samplePoints() {
   return out;
 }
 
-/** 해역 안의 바다에 있는 기록만 남김 */
+/** 해역 안의 바다(또는 해안에서 COAST_REACH 칸 이내)에 있는 기록만 남김 */
 export function keepSeaPoints(points) {
   return points.filter(([lon, lat]) => {
     const k = cellOf(lon, lat);
-    return k >= 0 && !landMask[k];
+    return k >= 0 && nearSeaMask[k] === 1;
   });
 }
 
@@ -78,9 +80,11 @@ function splitCsvLine(line, delimiter) {
 
 const LAT_NAMES = ['decimallatitude', 'latitude', 'lat'];
 const LON_NAMES = ['decimallongitude', 'longitude', 'lon', 'lng'];
+const GROUP_NAMES = ['group', '분류군'];
 
 /**
- * CSV/TSV 텍스트에서 위도·경도 열을 찾아 [경도, 위도] 목록을 만듦.
+ * CSV/TSV 텍스트에서 위도·경도 열을 찾아 [경도, 위도, 분류군] 목록을 만듦.
+ * 분류군 열(group 또는 분류군)은 없어도 됩니다.
  * @throws {Error} 데이터 줄이나 위도·경도 열이 없을 때
  */
 export function parseCsv(text) {
@@ -92,37 +96,34 @@ export function parseCsv(text) {
   const latCol = header.findIndex((h) => LAT_NAMES.includes(h) || h.includes('위도'));
   const lonCol = header.findIndex((h) => LON_NAMES.includes(h) || h.includes('경도'));
   if (latCol < 0 || lonCol < 0) throw new Error('위도·경도 열을 찾지 못했습니다. 첫 줄의 열 이름을 확인하세요.');
+  const groupCol = header.findIndex((h) => GROUP_NAMES.includes(h));
 
   const out = [];
   for (const line of lines.slice(1)) {
     const cells = splitCsvLine(line, delimiter);
     const lat = parseFloat(cells[latCol]);
     const lon = parseFloat(cells[lonCol]);
-    if (Number.isFinite(lon) && Number.isFinite(lat)) out.push([lon, lat]);
+    const group = groupCol >= 0 ? (cells[groupCol] || '').trim() : '';
+    if (Number.isFinite(lon) && Number.isFinite(lat)) out.push([lon, lat, group]);
   }
   return out;
 }
 
 /**
- * OBIS에서 해역 안 출현 기록을 받아옴.
- * @returns {Promise<{points: number[][], total: number}>}
+ * @typedef {Object} TargetGroup
+ * @property {string} key    CSV의 group 값 ('cetacean' 등)
+ * @property {string} label  화면 표시 이름
+ * @property {string[]} taxa OBIS 학명
+ * @property {number} count  기록 수
  */
-export async function fetchObisPoints() {
-  const { lon0, lon1, lat0, lat1 } = BOUNDS;
-  const wkt = `POLYGON((${lon0} ${lat0},${lon1} ${lat0},${lon1} ${lat1},${lon0} ${lat1},${lon0} ${lat0}))`;
-  const params = new URLSearchParams({
-    geometry: wkt,
-    size: String(OBIS_PAGE_SIZE),
-    fields: 'decimalLongitude,decimalLatitude',
-  });
 
-  const res = await fetch(`${OBIS_URL}?${params}`);
-  if (!res.ok) throw new Error(`HTTP ${res.status}`);
-  const body = await res.json();
-
-  const points = (body.results || [])
-    .map((o) => [Number(o.decimalLongitude), Number(o.decimalLatitude)])
-    .filter(([lon, lat]) => Number.isFinite(lon) && Number.isFinite(lat));
-  if (!points.length) throw new Error('받은 기록이 없습니다');
-  return { points, total: Number(body.total) || points.length };
+/**
+ * 미리 받아 둔 OBIS 보호 대상 기록을 불러옴.
+ * @returns {Promise<{points: Array, meta: {generatedAt: string, groups: TargetGroup[]}}>}
+ */
+export async function loadTargetDataset() {
+  const [csvRes, metaRes] = await Promise.all([fetch(TARGET_CSV_URL), fetch(TARGET_META_URL)]);
+  if (!csvRes.ok || !metaRes.ok) throw new Error(`HTTP ${csvRes.status}/${metaRes.status}`);
+  const [text, meta] = await Promise.all([csvRes.text(), metaRes.json()]);
+  return { points: parseCsv(text), meta };
 }

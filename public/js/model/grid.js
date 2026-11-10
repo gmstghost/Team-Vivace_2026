@@ -57,6 +57,30 @@ export const landMask = (() => {
   return mask;
 })();
 
+/**
+ * 바다에서 COAST_REACH 칸 안쪽까지의 칸 (바다 칸 포함).
+ * 해안선을 단순화해서 생긴 오차로 갯바위·항구의 기록(따개비, 멍게 등)이
+ * 육지 칸에 떨어지는 경우가 많아서, 이 범위 안의 기록은 버리지 않고 씁니다.
+ */
+export const COAST_REACH = 3; // 칸 (약 6 km)
+export const nearSeaMask = (() => {
+  const mask = new Uint8Array(N);
+  for (let j = 0; j < NY; j++) {
+    for (let i = 0; i < NX; i++) {
+      if (landMask[cellIndex(i, j)]) continue; // 바다 칸에서 출발해
+      // 주변 칸을 모두 표시
+      for (let dj = -COAST_REACH; dj <= COAST_REACH; dj++) {
+        for (let di = -COAST_REACH; di <= COAST_REACH; di++) {
+          const ni = i + di;
+          const nj = j + dj;
+          if (ni >= 0 && nj >= 0 && ni < NX && nj < NY) mask[cellIndex(ni, nj)] = 1;
+        }
+      }
+    }
+  }
+  return mask;
+})();
+
 /** 좌표에서 가장 가까운 바다 칸 번호 (항구가 육지 칸에 걸쳐 있을 때 사용) */
 export function snapToWater(lon, lat, maxRadius = 12) {
   const i0 = Math.min(NX - 1, Math.max(0, Math.floor((lon - BOUNDS.lon0) / CELL_DEG)));

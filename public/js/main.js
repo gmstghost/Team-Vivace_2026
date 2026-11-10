@@ -6,7 +6,7 @@
  */
 import { PORTS, HIGH_RISK } from './model/config.js';
 import { cellOf, landMask } from './model/grid.js';
-import { samplePoints, keepSeaPoints, parseCsv, fetchObisPoints } from './model/occurrences.js';
+import { samplePoints, keepSeaPoints, parseCsv, loadTargetDataset } from './model/occurrences.js';
 import { buildDensity } from './model/density.js';
 import { planRoutes } from './model/routing.js';
 import { MapView } from './ui/map-view.js';
@@ -26,7 +26,9 @@ const state = {
   noise: 50,
   optimalTemp: 15,
   weight: 6,
-  points: [],
+  points: [],          // 해역 안 출현 기록 [경도, 위도, 분류군]
+  groups: [],          // 화면에 보일 분류군 [{key, label, count}] (분류군이 없는 데이터면 빈 배열)
+  activeGroups: null,  // 켜 둔 분류군 key의 Set (null = 전부)
   density: null,
   risk: null,
 };
@@ -39,7 +41,7 @@ function recompute() {
   state.risk = risk;
   mapView.setRisk(risk);
   mapView.draw({
-    points: state.points,
+    points: visiblePoints(),
     showPoints: $('showPts').checked,
     shortestPath: shortest.path,
     safePath: safe.path,
@@ -59,19 +61,66 @@ function scheduleRecompute() {
   });
 }
 
-/** 출현 기록 교체 → 밀도 다시 계산 */
-function setPoints(all, label, isSample = false) {
+const visiblePoints = () =>
+  state.activeGroups ? state.points.filter((p) => state.activeGroups.has(p[2])) : state.points;
+
+/**
+ * 출현 기록 교체 → 분류군 선택지와 밀도를 다시 만듦.
+ * @param {Array} all [경도, 위도, 분류군] 목록
+ * @param {string} label 배지 문구
+ * @param {{isSample?: boolean, groups?: Array<{key: string, label: string}>}} [opts]
+ *   groups: 분류군 표시 이름 (OBIS 메타데이터). 없으면 CSV의 group 값을 그대로 이름으로 씀
+ */
+function setPoints(all, label, { isSample = false, groups = null } = {}) {
   state.points = keepSeaPoints(all);
-  state.density = buildDensity(state.points);
+  const dropped = all.length - state.points.length;
+
+  // 분류군 목록: 메타데이터 순서를 따르고, 실제 기록이 있는 것만
+  const counts = new Map();
+  for (const p of state.points) counts.set(p[2], (counts.get(p[2]) || 0) + 1);
+  const known = groups || [...counts.keys()].map((key) => ({ key, label: key || '(분류군 없음)' }));
+  state.groups = counts.size > 1 || !counts.has('')
+    ? known.filter((g) => counts.has(g.key)).map((g) => ({ ...g, count: counts.get(g.key) }))
+    : [];
+  state.activeGroups = state.groups.length ? new Set(state.groups.map((g) => g.key)) : null;
+  renderGroupFilters();
 
   const badge = $('dataBadge');
   badge.textContent = label;
   badge.className = isSample ? 'badge' : 'badge real';
-
-  const dropped = all.length - state.points.length;
   $('dataMsg').textContent =
-    `이 해역 안의 출현 기록 ${fmtKo(state.points.length)}건` + (dropped ? ` (범위 밖·육지 ${fmtKo(dropped)}건 제외)` : '');
+    `이 해역 안의 출현 기록 ${fmtKo(state.points.length)}건` + (dropped ? ` (범위 밖·내륙 ${fmtKo(dropped)}건 제외)` : '');
+
+  rebuildDensity();
+}
+
+function rebuildDensity() {
+  state.density = buildDensity(state.points, state.activeGroups);
   recompute();
+}
+
+/** 분류군 켜기/끄기 체크박스 */
+function renderGroupFilters() {
+  const list = $('groupList');
+  list.replaceChildren();
+  $('groupBox').hidden = state.groups.length === 0;
+  for (const g of state.groups) {
+    const chip = document.createElement('label');
+    chip.className = 'chip';
+    const box = document.createElement('input');
+    box.type = 'checkbox';
+    box.checked = true;
+    box.addEventListener('change', () => {
+      if (box.checked) state.activeGroups.add(g.key);
+      else state.activeGroups.delete(g.key);
+      rebuildDensity();
+    });
+    const count = document.createElement('span');
+    count.className = 'n';
+    count.textContent = fmtKo(g.count);
+    chip.append(box, ` ${g.label} `, count);
+    list.append(chip);
+  }
 }
 
 // ---------- 슬라이더 ----------
@@ -111,7 +160,7 @@ $('showPts').addEventListener('change', (e) => {
 });
 
 // ---------- 데이터 불러오기 ----------
-$('sampleBtn').addEventListener('click', () => setPoints(samplePoints(), SAMPLE_LABEL, true));
+$('sampleBtn').addEventListener('click', () => setPoints(samplePoints(), SAMPLE_LABEL, { isSample: true }));
 
 $('csvFile').addEventListener('change', async (e) => {
   const input = e.target;
@@ -126,20 +175,26 @@ $('csvFile').addEventListener('change', async (e) => {
   }
 });
 
-$('obisBtn').addEventListener('click', async (e) => {
-  const btn = e.currentTarget;
+/** 미리 받아 둔 OBIS 보호 대상 데이터. 실패하면 false */
+async function loadTargets() {
+  const btn = $('obisBtn');
   btn.disabled = true;
-  $('dataMsg').textContent = 'OBIS에서 불러오는 중…';
+  $('dataMsg').textContent = '보호 대상 데이터를 불러오는 중…';
   try {
-    const { points, total } = await fetchObisPoints();
-    const more = total > points.length ? ` · 전체 ${fmtKo(total)}건 중 일부` : '';
-    setPoints(points, `OBIS 실데이터${more}`);
+    const { points, meta } = await loadTargetDataset();
+    const date = (meta.generatedAt || '').slice(0, 10);
+    $('dataDate').textContent = date ? `${date}에 OBIS에서 받은` : 'OBIS에서 받은';
+    setPoints(points, 'OBIS 실데이터', { groups: meta.groups });
+    return true;
   } catch {
-    $('dataMsg').textContent = 'OBIS에 접속하지 못했습니다. 잠시 후 다시 시도하거나, obis.org에서 내려받은 CSV를 불러오세요.';
+    $('dataMsg').textContent = '보호 대상 데이터 파일을 불러오지 못했습니다. tools/fetch_obis_targets.py로 public/data/ 파일을 만드세요.';
+    return false;
   } finally {
     btn.disabled = false;
   }
-});
+}
+
+$('obisBtn').addEventListener('click', loadTargets);
 
 // ---------- 지도 위 좌표·위험도 표시 ----------
 $('map').addEventListener('pointermove', (e) => {
@@ -215,5 +270,7 @@ $('copyBtn').addEventListener('click', async (e) => {
 window.addEventListener('resize', () => mapView.resize());
 document.fonts?.ready.then(() => mapView.redraw());
 mapView.resize();
-setPoints(samplePoints(), SAMPLE_LABEL, true);
+loadTargets().then((ok) => {
+  if (!ok) setPoints(samplePoints(), SAMPLE_LABEL, { isSample: true });
+});
 loadSketch();

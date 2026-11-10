@@ -111,3 +111,10 @@ footer{color:var(--mute);font-size:12.5px;border-top:1px solid var(--line);paddi
 .bar .fill.old{background:var(--route-old)}
 .bar .fill.ai{background:var(--route-ai)}
 a{color:var(--sonar)}
+.groups{border:0;margin:0;padding:0;display:flex;flex-direction:column;gap:6px;min-width:0}
+.groups legend{padding:0;margin-bottom:6px}
+.chip{display:inline-flex;align-items:center;gap:6px;font-size:13.5px;padding:4px 10px;border:1px solid var(--line);border-radius:99px;background:var(--panel);cursor:pointer}
+.chip:has(input:checked){border-color:var(--sonar)}
+.chip:focus-within{outline:2px solid var(--sonar);outline-offset:2px}
+.chip .n{font-family:var(--mono);font-size:12px;color:var(--mute)}
+.chip input{accent-color:var(--sonar);margin:0}
