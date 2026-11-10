@@ -1,0 +1,12 @@
+# Firebase
+.firebase/
+*-debug.log
+
+# Python
+__pycache__/
+.venv/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
