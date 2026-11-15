@@ -8,14 +8,16 @@
  * 슬라이더는 planRoutes만 다시 부릅니다.
  */
 import { HIGH_RISK, DEFAULT_ROUTE, PRESET_ROUTES } from './model/config.js';
-import { loadLand, buildWorldGrid } from './model/land.js';
+import { loadLand } from './model/land.js';
 import { loadPorts, portLabel, countryName } from './model/ports.js';
 import { formatLat, formatLon } from './model/geo.js';
 import {
   samplePoints, parseCsv, loadTargetBaseline, pointsInBounds, detailPrecision, precisionCellKm, fetchDetail,
 } from './model/occurrences.js';
-import { buildDensity } from './model/density.js';
-import { planRegion, planRoutes, RouteError } from './model/routing.js';
+import { Grid } from './model/grid.js';
+import { ComputeClient } from './compute-client.js';
+const compute = new ComputeClient();
+
 import { MapView } from './ui/map-view.js';
 import { PortPicker } from './ui/port-picker.js';
 import { renderResults, clearResults } from './ui/results.js';
@@ -55,34 +57,52 @@ const state = {
 const data = { land: null, world: null, ports: [], portById: new Map(), baseline: null };
 
 const mapView = new MapView($('map'), { onPortClick: showPortPopup, onHover: showReadout });
-
 // ---------- 계산 → 화면 ----------
-function recompute() {
+let computeVersion = 0;
+let densityVersion = 0;
+let computing = false;
+let computeAgain = false;
+let recomputeTimer = null;
+let heatKey = '';
+async function recompute() {
+  if (computing) { computeAgain = true; return; }
   const { region } = state;
   if (!region || !state.density) return;
-  const { risk, shortest, safe } = planRoutes(region, state.density, state);
-  state.risk = risk;
-  mapView.setRisk(region.grid, risk, region.outside);
-  mapView.draw({
-    points: visiblePoints(),
-    showPoints: $('showPts').checked,
-    shortestPath: shortest.path,
-    safePath: safe.path,
-    from: { port: state.from, pt: region.fromPt },
-    to: { port: state.to, pt: region.toPt },
-  });
-  renderResults(shortest.metrics, safe.metrics);
+  const version = computeVersion;
+  const nextHeatKey = [routeSeq, densityVersion, state.temp, state.optimalTemp].join(':');
+  computing = true;
+  $('headline').setAttribute('aria-busy', 'true');
+  try {
+    const { risk, shortest, safe } = await compute.request('compute', {
+      regionVersion: routeSeq, densityVersion,
+      params: { temp: state.temp, optimalTemp: state.optimalTemp, noise: state.noise, weight: state.weight },
+    });
+    if (version !== computeVersion || state.region !== region) return;
+    state.risk = risk;
+    if (heatKey !== nextHeatKey) {
+      mapView.setRisk(region.grid, risk, region.outside);
+      heatKey = nextHeatKey;
+    }
+    mapView.draw({ points: visiblePoints(), showPoints: $('showPts').checked,
+      shortestPath: shortest.path, safePath: safe.path,
+      from: { port: state.from, pt: region.fromPt }, to: { port: state.to, pt: region.toPt },
+    });
+    renderResults(shortest.metrics, safe.metrics);
+    document.dispatchEvent(new CustomEvent('route-results', { detail: { shortest: shortest.metrics, safe: safe.metrics } }));
+  } catch (error) {
+    if (version === computeVersion && error.message !== 'STALE') setRouteMsg('계산 오류: ' + error.message, 'err');
+  } finally {
+    computing = false;
+    $('headline').removeAttribute('aria-busy');
+    if (computeAgain) { computeAgain = false; scheduleRecompute(); }
+  }
 }
 
-/** 슬라이더를 끄는 동안 프레임당 한 번만 계산 */
-let frameRequested = false;
+// Coalesce slider/sensor bursts without starving continuous sensor input.
 function scheduleRecompute() {
-  if (frameRequested) return;
-  frameRequested = true;
-  requestAnimationFrame(() => {
-    frameRequested = false;
-    recompute();
-  });
+  computeVersion++;
+  if (recomputeTimer) return;
+  recomputeTimer = setTimeout(() => { recomputeTimer = null; recompute(); }, 120);
 }
 
 const visiblePoints = () =>
@@ -105,6 +125,12 @@ async function setRoute(from, to) {
   toPicker.set(to);
   hidePortPopup();
   const seq = ++routeSeq;
+  computeVersion++;
+  state.region = null;
+  state.density = null;
+  state.risk = null;
+  detailAbort?.abort();
+  clearResults();
   if (!data.world) return; // 아직 데이터를 불러오는 중이면 끝난 뒤 다시 부름
 
   setRouteMsg(`${portLabel(from)} → ${portLabel(to)} 항로를 찾는 중…`);
@@ -114,7 +140,9 @@ async function setRoute(from, to) {
 
   try {
     const t0 = performance.now();
-    const region = planRegion(data.world, data.land, from, to);
+    const region = await compute.request('region', { from, to, version: seq });
+    if (seq !== routeSeq) return;
+    Object.setPrototypeOf(region.grid, Grid.prototype);
     state.region = region;
     state.detail = null;
     const g = region.grid;
@@ -127,14 +155,15 @@ async function setRoute(from, to) {
     refreshPoints();
     if (state.dataMode === 'obis') requestDetail();
   } catch (err) {
+    if (seq !== routeSeq) return;
     state.region = null;
     state.density = null;
     clearResults();
     mapView.heat = null;
     mapView.draw(null);
     mapView.fitBounds(boundsOf([[from.lon, from.lat], [to.lon, to.lat]]));
-    setRouteMsg(err instanceof RouteError ? err.message : `계산 중 오류: ${err.message}`, 'err');
-    if (!(err instanceof RouteError)) console.error(err);
+    setRouteMsg(`계산 중 오류: ${err.message}`, 'err');
+    console.error(err);
   } finally {
     if (seq === routeSeq) $('mapbox').classList.remove('busy');
   }
@@ -187,11 +216,20 @@ function refreshPoints() {
   rebuildDensity();
 }
 
-function rebuildDensity() {
+async function rebuildDensity() {
   const { region } = state;
   if (!region) return;
-  state.density = buildDensity(region.grid, region.land, state.points, state.activeGroups);
-  recompute();
+  const version = ++densityVersion;
+  computeVersion++;
+  state.density = null;
+  try {
+    await compute.request('density', { regionVersion: routeSeq, version, points: state.points, groups: state.activeGroups });
+    if (state.region !== region || version !== densityVersion) return;
+    state.density = true;
+    recompute();
+  } catch (error) {
+    if (state.region === region && version === densityVersion && error.message !== 'STALE') setRouteMsg('밀도 계산 오류: ' + error.message, 'err');
+  }
 }
 
 const regionKey = (r) => [r.grid.lon0, r.grid.lat0, r.grid.lon1, r.grid.lat1].map((v) => v.toFixed(3)).join(',');
@@ -231,7 +269,7 @@ async function requestDetail() {
     state.detailStatus = '';
     refreshPoints();
   } catch (err) {
-    if (ctrl.signal.aborted) return;
+    if (ctrl.signal.aborted || state.region !== region || state.dataMode !== 'obis') return;
     console.warn('OBIS 상세 기록을 받지 못함', err);
     state.detailStatus = 'failed';
     renderDataStatus(false);
@@ -505,7 +543,7 @@ async function start() {
     mapView.setLand(land);
     mapView.setPorts(ports);
     await nextFrame();
-    data.world = buildWorldGrid(land);
+    data.world = await compute.request('init', { land });
   } catch (err) {
     console.error(err);
     setRouteMsg('해안선·항구 데이터를 불러오지 못했습니다. tools/build_world_data.py로 public/data/world/ 파일을 만드세요.', 'err');
@@ -525,3 +563,4 @@ async function start() {
   await setRoute(state.from || portById(DEFAULT_ROUTE.from), state.to || portById(DEFAULT_ROUTE.to));
 }
 start();
+
