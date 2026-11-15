@@ -169,6 +169,7 @@ async function setRoute(from, to) {
   state.to = to;
   fromPicker.set(from);
   toPicker.set(to);
+  renderFavorites();
   hidePortPopup();
   const seq = ++routeSeq;
   computeVersion++;
@@ -398,7 +399,7 @@ function renderGroupFilters() {
   }
 }
 
-// ---------- 항구 검색·빠른 선택 ----------
+// ---------- 항구 검색 ----------
 const fromPicker = new PortPicker($('fromPort'), {
   getPorts: () => data.ports,
   onSelect: (p) => setRoute(p, state.to),
@@ -409,14 +410,79 @@ const toPicker = new PortPicker($('toPort'), {
 });
 $('swapBtn').addEventListener('click', () => setRoute(state.to, state.from));
 
-for (const preset of PRESET_ROUTES) {
-  const btn = document.createElement('button');
-  btn.type = 'button';
-  btn.className = 'preset';
-  btn.textContent = preset.label;
-  btn.addEventListener('click', () => setRoute(portById(preset.from), portById(preset.to)));
-  $('presets').append(btn);
+// ---------- 즐겨찾기 항로 (최대 5개, 브라우저/앱에 저장) ----------
+const FAVORITES_KEY = 'safe-route-favorites';
+const MAX_FAVORITES = 5;
+
+function loadFavorites() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(FAVORITES_KEY));
+    if (Array.isArray(saved)) {
+      return saved
+        .filter((f) => f && typeof f.from === 'string' && typeof f.to === 'string')
+        .slice(0, MAX_FAVORITES)
+        .map((f) => ({ from: f.from, to: f.to, label: String(f.label || `${f.from} → ${f.to}`) }));
+    }
+  } catch { /* 저장소를 못 쓰면 기본값 */ }
+  return PRESET_ROUTES.slice(0, MAX_FAVORITES).map((p) => ({ from: p.from, to: p.to, label: p.label }));
 }
+
+let favorites = loadFavorites();
+
+function saveFavorites() {
+  try { localStorage.setItem(FAVORITES_KEY, JSON.stringify(favorites)); } catch { /* 저장 실패는 무시 */ }
+}
+
+const favoriteIndex = (from, to) => favorites.findIndex((f) => f.from === from?.id && f.to === to?.id);
+
+function renderFavorites() {
+  const box = $('presets');
+  box.querySelectorAll('.fav, .fav-add').forEach((el) => el.remove());
+  const current = favoriteIndex(state.from, state.to);
+  favorites.forEach((fav, i) => {
+    const chip = document.createElement('span');
+    chip.className = 'fav' + (i === current ? ' active' : '');
+    const go = document.createElement('button');
+    go.type = 'button';
+    go.className = 'preset';
+    go.textContent = fav.label;
+    go.addEventListener('click', () => {
+      const from = portById(fav.from), to = portById(fav.to);
+      if (from && to) setRoute(from, to);
+      else if (data.world) setRouteMsg('즐겨찾기에 저장된 항구를 찾을 수 없습니다.', 'err');
+    });
+    const del = document.createElement('button');
+    del.type = 'button';
+    del.className = 'fav-del';
+    del.textContent = '×';
+    del.title = del.ariaLabel = `즐겨찾기에서 삭제: ${fav.label}`;
+    del.addEventListener('click', () => {
+      favorites.splice(i, 1);
+      saveFavorites();
+      renderFavorites();
+    });
+    chip.append(go, del);
+    box.append(chip);
+  });
+
+  const add = document.createElement('button');
+  add.type = 'button';
+  add.className = 'preset fav-add';
+  add.textContent = `☆ 현재 항로 추가 (${favorites.length}/${MAX_FAVORITES})`;
+  const full = favorites.length >= MAX_FAVORITES;
+  add.disabled = full || current >= 0 || !state.from || !state.to;
+  add.title = full ? `즐겨찾기는 최대 ${MAX_FAVORITES}개까지 저장할 수 있습니다. 하나를 지운 뒤 추가하세요.`
+    : current >= 0 ? '이미 즐겨찾기에 있는 항로입니다.'
+    : '지금 선택한 출발·도착 항구를 즐겨찾기에 추가';
+  add.addEventListener('click', () => {
+    if (!state.from || !state.to || favorites.length >= MAX_FAVORITES || favoriteIndex(state.from, state.to) >= 0) return;
+    favorites.push({ from: state.from.id, to: state.to.id, label: `${portLabel(state.from)} → ${portLabel(state.to)}` });
+    saveFavorites();
+    renderFavorites();
+  });
+  box.append(add);
+}
+renderFavorites();
 
 // ---------- 지도 위 패널 ----------
 /** 항로를 맞출 때 지도 위에 떠 있는 패널에 가리지 않도록 비울 여백 (px) */

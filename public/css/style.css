@@ -96,6 +96,14 @@ input[type=checkbox]{accent-color:var(--sonar)}
 .presets .hint{margin-right:4px}
 button.preset{border:0;border-radius:99px;background:var(--soft);color:var(--ink);padding:3px 10px;font-size:11px}
 button.preset:hover{background:color-mix(in srgb,var(--sonar) 16%,var(--soft))}
+button.preset:disabled{opacity:.5;cursor:default;background:var(--soft)}
+.fav{display:inline-flex;align-items:center;border-radius:99px;background:var(--soft)}
+.fav button.preset{background:transparent;padding-right:4px}
+.fav:hover{background:color-mix(in srgb,var(--sonar) 16%,var(--soft))}
+.fav.active{outline:1px solid var(--sonar)}
+button.fav-del{border:0;background:transparent;color:var(--mute);padding:0 8px 0 2px;font-size:13px;line-height:1;border-radius:0 99px 99px 0}
+button.fav-del:hover{color:var(--ink)}
+button.fav-add{border:1px dashed var(--line);background:transparent;color:var(--mute)}
 #routeMsg{font-size:11px}
 #routeMsg:empty{display:none}
 .suggest{position:absolute;z-index:40;top:100%;left:0;right:0;margin:4px 0 0;padding:4px;list-style:none;max-height:340px;overflow-y:auto;
