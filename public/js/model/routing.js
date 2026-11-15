@@ -279,13 +279,16 @@ export function planRoutes(region, density, params) {
   const risk = computeRisk(density, params.temp, params.optimalTemp);
 
   const w = avoidanceWeight(params.weight, params.noise);
-  const cells = w > 0 ? astar(grid, blocked, start, goal, { weight: w, risk }) : null;
+  // Penalize actual sensitive cells, not the displayed risk or threshold.
+  // The buffer near HIGH_RISK discourages skimming the boundary.
+  const costRisk = risk.map(r => r + (r >= HIGH_RISK ? 16 : 3 * Math.max(0, (r - 0.3) / (HIGH_RISK - 0.3))));
+  const cells = w > 0 ? astar(grid, blocked, start, goal, { weight: w, risk: costRisk }) : null;
   const safePath = cells ? cells.map((k) => grid.center(k)) : shortestPath;
 
   const shortest = { path: shortestPath, metrics: measureRoute(shortestPath, grid, risk) };
   let safe = { path: safePath, metrics: measureRoute(safePath, grid, risk) };
   // 격자 오차로 AI 항로가 최단보다 짧게 나오는 일 방지
-  if (safe.metrics.km < shortest.metrics.km) safe = shortest;
+  if (safe.metrics.km < shortest.metrics.km || safe.metrics.highKm > shortest.metrics.highKm + 0.01) safe = shortest;
 
   return { risk, shortest, safe };
 }

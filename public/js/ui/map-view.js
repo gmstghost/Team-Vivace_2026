@@ -2,7 +2,7 @@
  * 캔버스 해도: 위험도 히트맵, 경위선, 출현 기록, 육지, 항로, 항구, 축척.
  *
  * 메르카토르 도법 (항해용 해도와 같은 도법)으로 그리고, 휠·드래그·두 손가락으로 확대·이동합니다.
- * 경도는 '펼친 경도'(날짜변경선을 넘으면 180 이상)를 그대로 쓰고, 육지는 ±360 사본을 함께 그립니다.
+ * 경도를 펼쳐 날짜변경선을 지나는 항로와 반복되는 세계 지도를 표시합니다.
  */
 import { formatLat, formatLon } from '../model/geo.js';
 import { KM_PER_DEG_LON } from '../model/config.js';
@@ -77,13 +77,19 @@ export class MapView {
     this._drawnPorts = [];
     this._frame = 0;
 
+    this.updateColors();
+    this._bindInput();
+  }
+
+  updateColors() {
     const css = getComputedStyle(document.documentElement);
     const v = (name) => css.getPropertyValue(name).trim();
     this.colors = {
       abyss: v('--abyss'), line: v('--line'), ink: v('--ink'), mute: v('--mute'),
       old: v('--route-old'), ai: v('--route-ai'), land: v('--land'), sonar: v('--sonar'),
     };
-    this._bindInput();
+    this.landCacheKey = null;
+    this.requestRedraw();
   }
 
   // ---------- 데이터 ----------
@@ -93,6 +99,7 @@ export class MapView {
    * lineTo를 수십만 번 부르면 브라우저에서 몇 초씩 걸려서, SVG 경로 문자열로 만든 뒤 한 번에 넘깁니다.
    */
   setLand(land) {
+    this.landCacheKey = null;
     const fill = [];
     const stroke = [];
     const f = (v) => v.toFixed(3);
@@ -239,7 +246,7 @@ export class MapView {
     if (!w) return;
     const oldW = this.width;
     this.width = w;
-    this.height = Math.round(Math.min(720, Math.max(340, w * 0.82)));
+    this.height = Math.round(Math.max(360, window.innerHeight - 300));
     this.dpr = Math.min(window.devicePixelRatio || 1, 2);
     this.canvas.width = this.width * this.dpr;
     this.canvas.height = this.height * this.dpr;
@@ -283,7 +290,7 @@ export class MapView {
   _shifts(lon0 = -180, lon1 = 180) {
     const { lon0: v0, lon1: v1 } = this.visibleBounds();
     const out = [];
-    for (let k = Math.floor((v0 - lon1) / 360); k <= Math.ceil((v1 - lon0) / 360); k++) out.push(k * 360);
+    for (let k = Math.floor((v0 - lon1) / 360) + 1; k < (v1 - lon0) / 360; k++) out.push(k * 360);
     return out;
   }
 
@@ -301,6 +308,22 @@ export class MapView {
   }
 
   _drawLand() {
+    if (!this.landFill) return;
+    const key = [this.view.lon, this.view.y, this.view.scale, this.width, this.height, this.dpr].join(':');
+    if (key !== this.landCacheKey) {
+      const layer = this.landLayer || (this.landLayer = document.createElement('canvas'));
+      layer.width = this.canvas.width;
+      layer.height = this.canvas.height;
+      const screen = this.ctx;
+      this.ctx = layer.getContext('2d');
+      this._paintLand();
+      this.ctx = screen;
+      this.landCacheKey = key;
+    }
+    this.ctx.drawImage(this.landLayer, 0, 0, this.width, this.height);
+  }
+
+  _paintLand() {
     if (!this.landFill) return;
     const { ctx, dpr, view, colors: C } = this;
     for (const shift of this._shifts()) {
