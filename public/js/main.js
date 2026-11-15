@@ -56,7 +56,7 @@ const state = {
 /** 한 번 불러오면 바뀌지 않는 데이터 */
 const data = { land: null, world: null, ports: [], portById: new Map(), baseline: null };
 
-const mapView = new MapView($('map'), { onPortClick: showPortPopup, onHover: showReadout });
+const mapView = new MapView($('map'), { onPortClick: showPortPopup, onHover: showReadout, getPadding: mapPadding });
 const darkMode = $('darkMode');
 darkMode.checked = localStorage.getItem('safe-route-theme') === 'dark';
 function applyTheme() {
@@ -381,6 +381,41 @@ for (const preset of PRESET_ROUTES) {
   btn.addEventListener('click', () => setRoute(portById(preset.from), portById(preset.to)));
   $('presets').append(btn);
 }
+
+// ---------- 지도 위 패널 ----------
+/** 항로를 맞출 때 지도 위에 떠 있는 패널에 가리지 않도록 비울 여백 (px) */
+function mapPadding() {
+  const box = $('mapbox').getBoundingClientRect();
+  const pad = { top: 40, right: 56, bottom: 40, left: 40 };
+  const rectOf = (sel) => {
+    const el = document.querySelector(sel);
+    const r = el?.getBoundingClientRect();
+    return r && r.width && r.height ? r : null;
+  };
+  const top = rectOf('.topbar');
+  if (top) pad.top = Math.max(pad.top, top.bottom - box.top + 24);
+  const sideR = rectOf('.side');
+  if (sideR) {
+    if (sideR.height > box.height * 0.6) pad.right = Math.max(pad.right, box.right - sideR.left + 60);
+    else if (sideR.bottom > box.bottom - 40 && sideR.width > box.width * 0.6) pad.bottom = Math.max(pad.bottom, box.bottom - sideR.top + 24);
+  }
+  const legend = rectOf('.legend');
+  if (legend) pad.bottom = Math.max(pad.bottom, box.bottom - legend.top + 16);
+  return pad;
+}
+
+const side = $('side');
+const sideToggle = $('sideToggle');
+function setSideCollapsed(collapsed) {
+  side.classList.toggle('collapsed', collapsed);
+  document.body.classList.toggle('side-collapsed', collapsed);
+  sideToggle.setAttribute('aria-expanded', String(!collapsed));
+  sideToggle.textContent = collapsed ? '펼치기' : '접기';
+  sideToggle.title = collapsed ? '패널 펼치기' : '패널 접기';
+}
+// 좁은 화면에서는 지도가 먼저 보이도록 패널을 접은 채 시작
+setSideCollapsed(window.matchMedia('(max-width: 760px)').matches);
+sideToggle.addEventListener('click', () => setSideCollapsed(!side.classList.contains('collapsed')));
 
 // ---------- 지도: 확대 버튼, 항구 누르기, 좌표 표시 ----------
 $('zoomIn').addEventListener('click', () => mapView.zoomBy(2));

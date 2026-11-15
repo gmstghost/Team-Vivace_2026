@@ -202,8 +202,8 @@ export class MapView {
 
   // ---------- 화면 맞추기·확대 ----------
 
-  /** 범위가 화면에 다 들어오게 맞춤. 위쪽은 좌표 표시, 오른쪽은 확대 버튼 자리를 비움 */
-  fitBounds({ lon0, lon1, lat0, lat1 }, pad = { top: 64, right: 60, bottom: 44, left: 44 }) {
+  /** 범위가 화면에 다 들어오게 맞춤. 지도 위에 떠 있는 패널 자리는 handlers.getPadding()으로 비움 */
+  fitBounds({ lon0, lon1, lat0, lat1 }, pad = this.handlers.getPadding?.() ?? { top: 64, right: 60, bottom: 44, left: 44 }) {
     const ya = mercY(lat0);
     const yb = mercY(lat1);
     const w = Math.max(40, this.width - pad.left - pad.right);
@@ -240,17 +240,17 @@ export class MapView {
     this.view.y = half >= top ? 0 : Math.min(top - half, Math.max(-top + half, this.view.y));
   }
 
-  /** 부모 너비에 맞추고 높이는 너비 비례 (최소·최대 제한) */
+  /** 부모(화면 전체를 채우는 배경) 크기에 맞춤 */
   resize() {
     const w = this.canvas.parentNode.clientWidth;
-    if (!w) return;
+    const h = this.canvas.parentNode.clientHeight;
+    if (!w || !h) return;
     const oldW = this.width;
     this.width = w;
-    this.height = Math.round(Math.max(360, window.innerHeight - 300));
+    this.height = h;
     this.dpr = Math.min(window.devicePixelRatio || 1, 2);
     this.canvas.width = this.width * this.dpr;
     this.canvas.height = this.height * this.dpr;
-    this.canvas.style.height = `${this.height}px`;
     if (oldW && oldW !== w) this.view.scale = this._clampScale((this.view.scale * w) / oldW);
     this._clampView();
     this.redraw();

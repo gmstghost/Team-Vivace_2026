@@ -2,17 +2,34 @@
 <html lang="ko">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
   <title>SAFE Route 항로 시뮬레이터</title>
   <meta name="description" content="해양 생물 분포로 생태 민감 구역을 찾고, 그 구역을 피해 가는 항로를 계산하는 시뮬레이터 (Team Vivace)">
-  <link rel="stylesheet" href="css/style.css"><link rel="stylesheet" href="css/desktop.css"><link rel="stylesheet" href="css/theme.css">
+  <link rel="stylesheet" href="css/style.css">
   <script type="module" src="js/main.js"></script>
 </head>
 <body>
-<div class="wrap">
-<header><div class="app-name"><span class="app-mark">↗</span><h1>SAFE Route</h1><span class="app-type">항로 분석</span></div><div class="header-actions"><span class="team">TEAM VIVACE <span> / </span> 2026</span><label class="theme-switch"><input id="darkMode" type="checkbox" role="switch">다크 모드</label></div></header>
 
-<section class="route" aria-label="항로 선택">
+<!-- 배경: 화면 전체를 채우는 해도 -->
+<div class="mapbox" id="mapbox">
+  <canvas id="map" role="img" aria-label="해도: 생태 위험도 지도 위에 기존 최단 항로와 회피 항로 표시. 휠이나 두 손가락으로 확대, 끌어서 이동"></canvas>
+  <div class="pop" id="portPop" hidden>
+    <div class="pop-name" id="portPopName"></div>
+    <div class="row">
+      <button type="button" id="popFrom">출발로</button>
+      <button type="button" id="popTo">도착으로</button>
+      <button type="button" id="popClose" aria-label="닫기">×</button>
+    </div>
+  </div>
+  <div class="busy-msg" aria-hidden="true">계산 중…</div>
+</div>
+
+<!-- 지도 위 패널: 왼쪽 위 항로 선택 -->
+<section class="float topbar" aria-label="항로 선택">
+  <header>
+    <div class="app-name"><span class="app-mark">↗</span><h1>SAFE Route</h1><span class="app-type">항로 분석</span></div>
+    <div class="header-actions"><span class="team">TEAM VIVACE · 2026</span><label class="theme-switch"><input id="darkMode" type="checkbox" role="switch">다크 모드</label></div>
+  </header>
   <div class="pickers">
     <div class="picker"><label for="fromPort">출발 항구</label><input id="fromPort" type="text" placeholder="항구 이름·나라·UN/LOCODE"></div>
     <button type="button" id="swapBtn" class="swap" aria-label="출발·도착 바꾸기" title="출발·도착 바꾸기">⇄</button>
@@ -22,67 +39,34 @@
   <p class="hint" id="routeMsg" role="status"></p>
 </section>
 
-<div class="main">
-  <div class="chart"><div class="chart-title"><span>항로 지도</span><span>드래그로 이동 · 휠로 확대</span></div>
-    <div class="mapbox" id="mapbox">
-      <canvas id="map" role="img" aria-label="해도: 생태 위험도 지도 위에 기존 최단 항로와 회피 항로 표시. 휠이나 두 손가락으로 확대, 끌어서 이동"></canvas>
-      <div class="readout" id="readout">휠로 확대 · 끌어서 이동 · 항구 점을 눌러 선택</div>
-      <div class="zoom">
-        <button type="button" id="zoomIn" aria-label="확대">+</button>
-        <button type="button" id="zoomOut" aria-label="축소">−</button>
-        <button type="button" id="zoomFit" aria-label="항로에 맞추기" title="항로에 맞추기">⤢</button>
-      </div>
-      <div class="pop" id="portPop" hidden>
-        <div class="pop-name" id="portPopName"></div>
-        <div class="row">
-          <button type="button" id="popFrom">출발로</button>
-          <button type="button" id="popTo">도착으로</button>
-          <button type="button" id="popClose" aria-label="닫기">×</button>
-        </div>
-      </div>
-      <div class="busy-msg" aria-hidden="true">계산 중…</div>
-    </div>
-    <div class="legend">
-      <span class="k"><span class="sw old"></span>기존 항로 (최단)</span>
-      <span class="k"><span class="sw"></span>회피 항로</span>
-      <span class="k">위험도 낮음 <span class="ramp"></span> 높음</span>
-      <span class="k"><span class="dot"></span>생물 출현 기록</span>
-      <label class="k" for="showPts"><input type="checkbox" id="showPts" checked> 기록 점 보기</label>
-    </div>
-    <p class="hint">해안선은 Natural Earth 1:10m (약 200 m 정밀도), 항구는 UN/LOCODE·Natural Earth 자료입니다. 수심·항로대·통항 규칙을 반영하지 않은 시뮬레이션이므로 실제 항해에 쓸 수 없습니다.</p>
+<!-- 지도 위 조작 -->
+<div class="zoom">
+  <button type="button" id="zoomIn" aria-label="확대">+</button>
+  <button type="button" id="zoomOut" aria-label="축소">−</button>
+  <button type="button" id="zoomFit" aria-label="항로에 맞추기" title="항로에 맞추기">⤢</button>
+</div>
+<div class="readout" id="readout">휠로 확대 · 끌어서 이동 · 항구 점을 눌러 선택</div>
+
+<!-- 왼쪽 아래 범례 -->
+<div class="float legend">
+  <div class="legend-keys">
+    <span class="k"><span class="sw old"></span>기존 항로 (최단)</span>
+    <span class="k"><span class="sw"></span>회피 항로</span>
+    <span class="k">위험도 낮음 <span class="ramp"></span> 높음</span>
+    <span class="k"><span class="dot"></span>생물 출현 기록</span>
+    <label class="k" for="showPts"><input type="checkbox" id="showPts" checked> 기록 점 보기</label>
   </div>
+  <p class="hint">해안선은 Natural Earth 1:10m (약 200 m 정밀도), 항구는 UN/LOCODE·Natural Earth 자료입니다. 수심·항로대·통항 규칙을 반영하지 않은 시뮬레이션이므로 실제 항해에 쓸 수 없습니다.</p>
+</div>
 
-  <div class="side">
-    <section class="sec">
-      <h2>생물 데이터 <span class="badge" id="dataBadge">불러오는 중…</span></h2>
-      <div class="row">
-        <button type="button" id="obisBtn">OBIS 보호 대상</button>
-        <label class="filebtn">CSV 불러오기<input type="file" id="csvFile" accept=".csv,.tsv,.txt"></label>
-        <button type="button" id="sampleBtn">예시 데이터</button>
-      </div>
-      <fieldset class="groups" id="groupBox" hidden>
-        <legend class="hint">피해야 할 대상</legend>
-        <div class="row" id="groupList"></div>
-      </fieldset>
-      <p class="hint" id="dataMsg">출현 기록 0건</p>
-      <p class="hint">OBIS 데이터는 미리 받아 둔 전 세계 격자(약 1.4° 칸)로 먼저 계산하고, 항로가 정해지면 그 해역만 OBIS에서 촘촘한 격자(약 5~20 km 칸)로 바로 받아 다시 계산합니다. 분류군마다 밀도를 따로 0~1로 맞춘 뒤 겹쳐서, 기록이 적은 고래·물범도 기록이 많은 따개비와 같은 무게로 반영됩니다.</p>
-      <p class="hint">CSV는 위도·경도 열(<code>decimalLatitude</code>, <code>decimalLongitude</code> 또는 <code>위도</code>, <code>경도</code>)만 있으면 됩니다. <code>group</code> 열이 있으면 분류군별로, <code>count</code> 열이 있으면 기록 수를 무게로 씁니다.</p>
-    </section>
-
-    <section class="sec">
-      <h2>환경 조건 <span class="eyebrow">Arduino Uno</span></h2>
-      <div class="row">
-        <button type="button" class="primary" id="serialBtn">아두이노 연결</button>
-        <span class="status" id="serialStatus">연결 안 됨 · 슬라이더로 값을 직접 넣는 중</span>
-      </div>
-      <div class="ctl"><label for="temp">수온</label><input type="range" id="temp" min="0" max="30" step="0.5" value="15"><output id="tempOut" for="temp"></output></div>
-      <div class="ctl"><label for="noise">선박 소음</label><input type="range" id="noise" min="0" max="100" step="1" value="50"><output id="noiseOut" for="noise"></output></div>
-      <div class="ctl"><label for="topt">산란 적정 수온</label><input type="range" id="topt" min="5" max="25" step="0.5" value="15"><output id="toptOut" for="topt"></output></div>
-      <div class="ctl"><label for="weight">회피 가중치</label><input type="range" id="weight" min="0" max="40" step="0.5" value="12"><output id="weightOut" for="weight"></output></div>
-      <p class="hint">수온이 산란 적정 수온에 가까울수록 민감도가 올라가고, 소음이 클수록 민감 구역을 더 멀리 돌아갑니다. 두 관계식은 팀이 정한 가정이며 아래에 적혀 있습니다.</p>
-    </section>
-
-    <section class="sec">
+<!-- 오른쪽 패널: 결과 → 데이터 → 센서 → 안내 -->
+<aside class="float side" id="side" aria-label="분석 패널">
+  <div class="side-head">
+    <h2>분석 패널</h2>
+    <button type="button" id="sideToggle" class="side-toggle" aria-controls="sideBody" aria-expanded="true" title="패널 접기">접기</button>
+  </div>
+  <div class="side-body" id="sideBody">
+    <section class="sec comparison">
       <h2>항로 비교</h2>
       <div class="avoidance-stat"><span>민감 구역 회피율</span><strong id="avoidanceRate">–</strong></div>
       <p class="headline" id="headline">계산 중…</p>
@@ -103,54 +87,80 @@
       </div>
       <p class="hint">민감 구역은 위험도 0.5 이상인 바다입니다. 회피율은 기존 항로 대비 민감 구역 통과 거리 감소율이며, 항구 주변이나 좁은 해협에서는 완전 회피가 어려울 수 있습니다. 누적 위험 노출은 지나간 거리마다 위험도를 곱해 더한 값입니다.</p>
     </section>
+
+    <section class="sec">
+      <h2>생물 데이터 <span class="badge" id="dataBadge">불러오는 중…</span></h2>
+      <div class="row">
+        <button type="button" id="obisBtn">OBIS 보호 대상</button>
+        <label class="filebtn">CSV 불러오기<input type="file" id="csvFile" accept=".csv,.tsv,.txt"></label>
+        <button type="button" id="sampleBtn">예시 데이터</button>
+      </div>
+      <fieldset class="groups" id="groupBox" hidden>
+        <legend class="hint">피해야 할 대상</legend>
+        <div class="row" id="groupList"></div>
+      </fieldset>
+      <p class="hint" id="dataMsg">출현 기록 0건</p>
+      <details class="section-help"><summary>데이터 형식 및 처리 방식</summary>
+        <p class="hint">OBIS 데이터는 미리 받아 둔 전 세계 격자(약 1.4° 칸)로 먼저 계산하고, 항로가 정해지면 그 해역만 OBIS에서 촘촘한 격자(약 5~20 km 칸)로 바로 받아 다시 계산합니다. 분류군마다 밀도를 따로 0~1로 맞춘 뒤 겹쳐서, 기록이 적은 고래·물범도 기록이 많은 따개비와 같은 무게로 반영됩니다.</p>
+        <p class="hint">CSV는 위도·경도 열(<code>decimalLatitude</code>, <code>decimalLongitude</code> 또는 <code>위도</code>, <code>경도</code>)만 있으면 됩니다. <code>group</code> 열이 있으면 분류군별로, <code>count</code> 열이 있으면 기록 수를 무게로 씁니다.</p>
+      </details>
+    </section>
+
+    <section class="sec">
+      <h2>환경 조건 <span class="eyebrow">Arduino Uno</span></h2>
+      <div class="row">
+        <button type="button" class="primary" id="serialBtn">아두이노 연결</button>
+        <span class="status" id="serialStatus">연결 안 됨 · 슬라이더로 값을 직접 넣는 중</span>
+      </div>
+      <div class="ctl"><label for="temp">수온</label><input type="range" id="temp" min="0" max="30" step="0.5" value="15"><output id="tempOut" for="temp"></output></div>
+      <div class="ctl"><label for="noise">선박 소음</label><input type="range" id="noise" min="0" max="100" step="1" value="50"><output id="noiseOut" for="noise"></output></div>
+      <div class="ctl"><label for="topt">산란 적정 수온</label><input type="range" id="topt" min="5" max="25" step="0.5" value="15"><output id="toptOut" for="topt"></output></div>
+      <div class="ctl"><label for="weight">회피 가중치</label><input type="range" id="weight" min="0" max="40" step="0.5" value="12"><output id="weightOut" for="weight"></output></div>
+      <details class="section-help"><summary>환경 조건 안내</summary>
+        <p class="hint">수온이 산란 적정 수온에 가까울수록 민감도가 올라가고, 소음이 클수록 민감 구역을 더 멀리 돌아갑니다. 두 관계식은 팀이 정한 가정이며 아래 계산 방법에 적혀 있습니다.</p>
+      </details>
+    </section>
+
+    <section class="sec info">
+      <details class="method"><summary>계산 방법 및 데이터 안내</summary><div class="below">
+        <div class="step"><span class="n">0단계 · 해역</span><h3>전 세계에서 통로를 정합니다</h3>
+          <p>전 세계 바다를 0.25° (약 28 km) 격자로 나눠 두 항구 사이 대략의 최단 길을 찾고, 그 길 주변 통로만 0.01~0.15° 격자로 촘촘하게 다시 나눕니다. 항로가 짧을수록 격자가 촘촘합니다. 수에즈·파나마 운하와 좁은 해협은 직접 뚫어 두고, 결빙되는 북극해는 막아 둡니다.</p></div>
+        <div class="step"><span class="n">1단계 · 데이터</span><h3>출현 기록을 격자에 모읍니다</h3>
+          <p>생물 출현 기록을 주변 격자에 퍼뜨려 서식 밀도를 추정합니다 (가우시안 커널 밀도 추정, 반경 약 7.5 km, 격자 자료는 칸 크기만큼 넓힘). 기록 수가 많은 칸은 1 + ln(기록 수)만큼 무게를 줍니다.</p></div>
+        <div class="step"><span class="n">2단계 · 위험도</span><h3>수온으로 민감도를 보정합니다</h3>
+          <p><code>위험도 = 서식 밀도 × (0.4 + 0.6 × e^−((수온 − 적정)/5)²)</code><br>수온이 산란 적정 수온과 같으면 서식 밀도가 그대로 위험도가 되고, 멀어지면 최대 60% 낮아집니다.</p></div>
+        <div class="step"><span class="n">3단계 · 항로</span><h3>A*로 비용이 가장 작은 길을 찾습니다</h3>
+          <p><code>비용 = 거리 × (1 + 가중치 × 회피 비용)</code><br><code>가중치 = 회피 가중치 × (0.5 + 1.5 × 소음)</code><br>회피 비용은 위험도에 민감 구역 통과 벌점 16을 더합니다. 위험도 0.3~0.5 구간에도 최대 3의 완충 비용을 적용합니다. 가중치 0이면 최단 항로를 사용합니다.</p></div>
+      </div></details>
+
+      <details class="hardware">
+        <summary>아두이노 연결 방법과 스케치</summary>
+        <div class="inner">
+          <div class="wire">
+            <table>
+              <thead><tr><th>부품</th><th>핀</th><th>Uno</th></tr></thead>
+              <tbody>
+                <tr><td>수온 센서 DS18B20</td><td>DATA</td><td>D2 (5V와 4.7kΩ 풀업)</td></tr>
+                <tr><td></td><td>VCC / GND</td><td>5V / GND</td></tr>
+                <tr><td>소리 센서 모듈</td><td>AO</td><td>A0</td></tr>
+                <tr><td></td><td>VCC / GND</td><td>5V / GND</td></tr>
+              </tbody>
+            </table>
+            <p class="hint">라이브러리 관리자에서 <code>OneWire</code>와 <code>DallasTemperature</code>를 설치합니다. 스케치는 9600 bps로 <code>T:18.5,N:42</code> 형식의 줄을 보냅니다.</p>
+            <p class="hint">아두이노 연결 버튼으로 USB 포트를 선택하세요. 웹에서는 PC의 Chrome 또는 Edge를 사용하세요. 아두이노 IDE의 시리얼 모니터는 닫아 두세요.</p>
+            <p class="hint"><a href="arduino/safe_route_sensor.ino" download>safe_route_sensor.ino 내려받기</a></p>
+          </div>
+          <div class="codebox">
+            <button type="button" id="copyBtn">복사</button>
+            <pre id="sketch">// 스케치를 불러오는 중…</pre>
+          </div>
+        </div>
+      </details>
+
+      <footer>데이터 출처: OBIS (obis.org) 해양 생물 분포 데이터, Natural Earth (naturalearthdata.com) 해안선·주요 항구, UN/LOCODE (unece.org) 항구 목록. 보호 대상 기록은 <span id="dataDate">OBIS에서 받은</span> 출현 기록이며, 조사가 이뤄진 곳만 기록되므로 기록이 없는 곳이 생물이 없는 곳은 아닙니다. "예시 데이터"는 동작을 보여 주려고 만든 가상 값입니다.</footer>
+    </section>
   </div>
-</div>
+</aside>
 
-<details class="method"><summary>계산 방법 및 데이터 안내</summary><div class="below">
-  <div class="step"><span class="n">0단계 · 해역</span><h3>전 세계에서 통로를 정합니다</h3>
-    <p>전 세계 바다를 0.25° (약 28 km) 격자로 나눠 두 항구 사이 대략의 최단 길을 찾고, 그 길 주변 통로만 0.01~0.15° 격자로 촘촘하게 다시 나눕니다. 항로가 짧을수록 격자가 촘촘합니다. 수에즈·파나마 운하와 좁은 해협은 직접 뚫어 두고, 결빙되는 북극해는 막아 둡니다.</p></div>
-  <div class="step"><span class="n">1단계 · 데이터</span><h3>출현 기록을 격자에 모읍니다</h3>
-    <p>생물 출현 기록을 주변 격자에 퍼뜨려 서식 밀도를 추정합니다 (가우시안 커널 밀도 추정, 반경 약 7.5 km, 격자 자료는 칸 크기만큼 넓힘). 기록 수가 많은 칸은 1 + ln(기록 수)만큼 무게를 줍니다.</p></div>
-  <div class="step"><span class="n">2단계 · 위험도</span><h3>수온으로 민감도를 보정합니다</h3>
-    <p><code>위험도 = 서식 밀도 × (0.4 + 0.6 × e^−((수온 − 적정)/5)²)</code><br>수온이 산란 적정 수온과 같으면 서식 밀도가 그대로 위험도가 되고, 멀어지면 최대 60% 낮아집니다.</p></div>
-  <div class="step"><span class="n">3단계 · 항로</span><h3>A*로 비용이 가장 작은 길을 찾습니다</h3>
-    <p><code>비용 = 거리 × (1 + 가중치 × 회피 비용)</code><br><code>가중치 = 회피 가중치 × (0.5 + 1.5 × 소음)</code><br>회피 비용은 위험도에 민감 구역 통과 벌점 16을 더합니다. 위험도 0.3~0.5 구간에도 최대 3의 완충 비용을 적용합니다. 가중치 0이면 최단 항로를 사용합니다.</p></div>
-</div>
-
-</details>
-<details class="hardware">
-  <summary>아두이노 연결 방법과 스케치</summary>
-  <div class="inner">
-    <div class="wire">
-      <table>
-        <thead><tr><th>부품</th><th>핀</th><th>Uno</th></tr></thead>
-        <tbody>
-          <tr><td>수온 센서 DS18B20</td><td>DATA</td><td>D2 (5V와 4.7kΩ 풀업)</td></tr>
-          <tr><td></td><td>VCC / GND</td><td>5V / GND</td></tr>
-          <tr><td>소리 센서 모듈</td><td>AO</td><td>A0</td></tr>
-          <tr><td></td><td>VCC / GND</td><td>5V / GND</td></tr>
-        </tbody>
-      </table>
-      <p class="hint">라이브러리 관리자에서 <code>OneWire</code>와 <code>DallasTemperature</code>를 설치합니다. 스케치는 9600 bps로 <code>T:18.5,N:42</code> 형식의 줄을 보냅니다.</p>
-      <p class="hint">아두이노 연결 버튼으로 USB 포트를 선택하세요. 웹에서는 PC의 Chrome 또는 Edge를 사용하세요. 아두이노 IDE의 시리얼 모니터는 닫아 두세요.</p>
-      <p class="hint"><a href="arduino/safe_route_sensor.ino" download>safe_route_sensor.ino 내려받기</a></p>
-    </div>
-    <div class="codebox">
-      <button type="button" id="copyBtn">복사</button>
-      <pre id="sketch">// 스케치를 불러오는 중…</pre>
-    </div>
-  </div>
-</details>
-
-<footer>데이터 출처: OBIS (obis.org) 해양 생물 분포 데이터, Natural Earth (naturalearthdata.com) 해안선·주요 항구, UN/LOCODE (unece.org) 항구 목록. 보호 대상 기록은 <span id="dataDate">OBIS에서 받은</span> 출현 기록이며, 조사가 이뤄진 곳만 기록되므로 기록이 없는 곳이 생물이 없는 곳은 아닙니다. "예시 데이터"는 동작을 보여 주려고 만든 가상 값입니다.</footer>
-</div>
-<script>
-const sections=document.querySelectorAll('.side > .sec');
-document.querySelector('.side').prepend(sections[2]);
-sections[2].classList.add('comparison');
-for(const section of [sections[0],sections[1]]) {
-  const notes=[...section.querySelectorAll(':scope > p.hint:not([id])')];
-  if(notes.length){const details=document.createElement('details');details.className='section-help';const summary=document.createElement('summary');summary.textContent=section===sections[0]?'데이터 형식 및 처리 방식':'환경 조건 안내';details.append(summary,...notes);section.append(details);}
-}
-</script></body>
+</body>
 </html>
