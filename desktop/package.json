@@ -1,0 +1,39 @@
+{
+  "name": "safe-route-desktop",
+  "version": "1.2.2",
+  "description": "Team Vivace SAFE Route desktop",
+  "author": "Team Vivace",
+  "main": "main.cjs",
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder --win portable --x64"
+  },
+  "build": {
+    "appId": "org.teamvivace.saferoute",
+    "productName": "SAFE Route",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "main.cjs"
+    ],
+    "win": {
+      "target": "portable",
+      "signAndEditExecutable": false
+    },
+    "portable": {
+      "artifactName": "SAFE-Route-1.2.2.exe"
+    },
+    "compression": "store",
+    "extraResources": [
+      {
+        "to": "public",
+        "from": "../public"
+      }
+    ]
+  },
+  "devDependencies": {
+    "electron": "45.3.2",
+    "electron-builder": "26.18.0"
+  }
+}
