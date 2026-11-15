@@ -15,6 +15,7 @@ import {
   samplePoints, parseCsv, loadTargetBaseline, pointsInBounds, detailPrecision, precisionCellKm, fetchDetail,
 } from './model/occurrences.js';
 import { Grid } from './model/grid.js';
+import { computeRisk } from './model/density.js';
 import { ComputeClient } from './compute-client.js';
 const compute = new ComputeClient();
 
@@ -95,6 +96,7 @@ async function recompute() {
       mapView.setRisk(region.grid, risk, region.outside);
       heatKey = nextHeatKey;
     }
+    applyWorldRisk();
     mapView.draw({ points: visiblePoints(), showPoints: $('showPts').checked,
       shortestPath: shortest.path, safePath: safe.path,
       from: { port: state.from, pt: region.fromPt }, to: { port: state.to, pt: region.toPt },
@@ -115,6 +117,38 @@ function scheduleRecompute() {
   computeVersion++;
   if (recomputeTimer) return;
   recomputeTimer = setTimeout(() => { recomputeTimer = null; recompute(); }, 120);
+}
+
+// ---------- 전 세계 바탕 층 ----------
+// 지금 데이터의 전체 기록(해역 상세 데이터 제외)으로 0.25° 전 세계 격자 위험도를 만들어 흐리게 깔아 둡니다.
+// 밀도는 데이터·분류군이 바뀔 때만 워커에서 다시 계산하고, 수온 보정은 여기서 곱합니다.
+const world = { grid: null, density: null, version: 0, key: '' };
+
+async function rebuildWorldDensity() {
+  if (!data.world) return;
+  const version = ++world.version;
+  // 사용자가 끈 분류군만 뺌 (이 해역에 없는 분류군은 켜진 것으로 봄)
+  const exclude = state.activeGroups && state._knownGroups
+    ? [...state._knownGroups].filter((k) => !state.activeGroups.has(k))
+    : [];
+  try {
+    const { grid, density } = await compute.request('world-density', { points: state.allPoints, exclude });
+    if (version !== world.version) return;
+    world.grid = grid;
+    world.density = density;
+    world.key = '';
+    applyWorldRisk();
+  } catch (error) {
+    if (version === world.version && error.message !== 'STALE') console.warn('전 세계 위험도 계산 오류', error);
+  }
+}
+
+function applyWorldRisk() {
+  if (!world.density) return;
+  const key = [world.version, state.temp, state.optimalTemp].join(':');
+  if (key === world.key) return;
+  world.key = key;
+  mapView.setWorldRisk(world.grid, computeRisk(world.density, state.temp, state.optimalTemp));
 }
 
 const visiblePoints = () =>
@@ -335,6 +369,7 @@ function setDataMode(mode, { points = [], name = '' } = {}) {
   else if (mode === 'sample') state.allPoints = samplePoints();
   else state.allPoints = points;
   refreshPoints();
+  rebuildWorldDensity();
   if (mode === 'obis') requestDetail();
 }
 
@@ -353,6 +388,7 @@ function renderGroupFilters() {
       if (box.checked) state.activeGroups.add(g.key);
       else state.activeGroups.delete(g.key);
       rebuildDensity();
+      rebuildWorldDensity();
     });
     const count = document.createElement('span');
     count.className = 'n';
@@ -459,6 +495,8 @@ function showReadout(lon, lat, port) {
     $('readout').textContent = `${where} · 위험도 ${v.toFixed(2)} (${zone})${r.blocked[k] ? ' · 통로 밖' : ''}`;
   }
 }
+
+$('showWorld').addEventListener('change', (e) => mapView.setShowWorld(e.target.checked));
 
 $('showPts').addEventListener('change', (e) => {
   if (mapView.scene) mapView.draw({ ...mapView.scene, showPoints: e.target.checked });
@@ -607,6 +645,8 @@ async function start() {
     state.dataMode = 'sample';
     state.allPoints = samplePoints();
   }
+  // 전 세계 층은 첫 항로가 나온 뒤에 (워커는 한 번에 하나씩 계산하므로)
   await setRoute(state.from || portById(DEFAULT_ROUTE.from), state.to || portById(DEFAULT_ROUTE.to));
+  rebuildWorldDensity();
 }
 start();

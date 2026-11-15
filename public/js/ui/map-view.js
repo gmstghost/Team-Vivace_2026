@@ -53,6 +53,47 @@ const GRID_STEPS = [0.1, 0.2, 0.25, 0.5, 1, 2, 2.5, 5, 10, 15, 20, 30, 45, 60, 9
 /** 축척 막대 길이 후보 (km) */
 const SCALE_KM = [1, 2, 5, 10, 20, 25, 50, 100, 200, 250, 500, 1000, 2000, 2500, 5000];
 
+/** 전 세계 바탕 층 불투명도 (통로 층보다 흐리게) */
+const WORLD_HEAT_ALPHA = 0.45;
+
+/**
+ * 위험도 격자를 히트맵 이미지로 변환. 메르카토르에 맞게 행을 다시 배치해 둠.
+ * 통로 밖(outside = 1) 칸은 흐리게 그려 탐색 범위가 보이게 합니다.
+ * @param {{canvas: HTMLCanvasElement, ctx: CanvasRenderingContext2D}|null} layer 다시 쓸 이전 층
+ * @param {import('../model/grid.js').Grid} grid
+ * @param {Float32Array} risk
+ * @param {Uint8Array} [outside]
+ */
+function heatLayer(layer, grid, risk, outside = null) {
+  const { nx, ny } = grid;
+  const y0 = mercY(grid.lat0);
+  const y1 = mercY(grid.lat1);
+  const rows = ny;
+  if (!layer || layer.canvas.width !== nx || layer.canvas.height !== rows) {
+    const c = layer?.canvas || document.createElement('canvas');
+    c.width = nx;
+    c.height = rows;
+    layer = { canvas: c, ctx: c.getContext('2d') };
+  }
+  const img = layer.ctx.createImageData(nx, rows);
+  const d = img.data;
+  for (let row = 0; row < rows; row++) {
+    // 이미지 위쪽 = 북쪽. 메르카토르 y가 고르게 나뉘도록 원래 위도 행을 골라 옴
+    const lat = latOfMercY(y1 - ((row + 0.5) / rows) * (y1 - y0));
+    const j = Math.min(ny - 1, Math.max(0, Math.floor((lat - grid.lat0) / grid.cellDeg)));
+    const src = j * nx;
+    const dst = row * nx * 4;
+    for (let i = 0; i < nx; i++) {
+      const s = Math.min(255, Math.round(risk[src + i] * 255)) * 4;
+      const o = dst + i * 4;
+      d[o] = RISK_LUT[s]; d[o + 1] = RISK_LUT[s + 1]; d[o + 2] = RISK_LUT[s + 2];
+      d[o + 3] = outside && outside[src + i] ? RISK_LUT[s + 3] * 0.28 : RISK_LUT[s + 3];
+    }
+  }
+  layer.ctx.putImageData(img, 0, 0);
+  return Object.assign(layer, { lon0: grid.lon0, lon1: grid.lon1, y0, y1 });
+}
+
 export class MapView {
   /**
    * @param {HTMLCanvasElement} canvas
@@ -73,7 +114,9 @@ export class MapView {
     this.landFill = null;
     this.landStroke = null;
     this.ports = [];
-    this.heat = null; // { canvas, lon0, lon1, y0, y1 }
+    this.heat = null; // 통로 층 { canvas, ctx, lon0, lon1, y0, y1 }
+    this.worldHeat = null; // 전 세계 바탕 층 (같은 모양)
+    this.showWorld = true;
     this._drawnPorts = [];
     this._frame = 0;
 
@@ -133,41 +176,24 @@ export class MapView {
     this.ports = ports;
   }
 
-  /**
-   * 위험도 격자를 히트맵 이미지로 변환. 메르카토르에 맞게 행을 다시 배치해 둠.
-   * 통로 밖(outside = 1) 칸은 흐리게 그려 탐색 범위가 보이게 합니다.
-   * @param {import('../model/grid.js').Grid} grid
-   * @param {Float32Array} risk
-   * @param {Uint8Array} [outside]
-   */
+  /** 항로 통로 층 (heatLayer 참고) */
   setRisk(grid, risk, outside = null) {
-    const { nx, ny } = grid;
-    const y0 = mercY(grid.lat0);
-    const y1 = mercY(grid.lat1);
-    const rows = ny;
-    if (!this.heat || this.heat.canvas.width !== nx || this.heat.canvas.height !== rows) {
-      const c = this.heat?.canvas || document.createElement('canvas');
-      c.width = nx;
-      c.height = rows;
-      this.heat = { canvas: c, ctx: c.getContext('2d') };
-    }
-    const img = this.heat.ctx.createImageData(nx, rows);
-    const d = img.data;
-    for (let row = 0; row < rows; row++) {
-      // 이미지 위쪽 = 북쪽. 메르카토르 y가 고르게 나뉘도록 원래 위도 행을 골라 옴
-      const lat = latOfMercY(y1 - ((row + 0.5) / rows) * (y1 - y0));
-      const j = Math.min(ny - 1, Math.max(0, Math.floor((lat - grid.lat0) / grid.cellDeg)));
-      const src = j * nx;
-      const dst = row * nx * 4;
-      for (let i = 0; i < nx; i++) {
-        const s = Math.min(255, Math.round(risk[src + i] * 255)) * 4;
-        const o = dst + i * 4;
-        d[o] = RISK_LUT[s]; d[o + 1] = RISK_LUT[s + 1]; d[o + 2] = RISK_LUT[s + 2];
-        d[o + 3] = outside && outside[src + i] ? RISK_LUT[s + 3] * 0.28 : RISK_LUT[s + 3];
-      }
-    }
-    this.heat.ctx.putImageData(img, 0, 0);
-    Object.assign(this.heat, { lon0: grid.lon0, lon1: grid.lon1, y0, y1 });
+    this.heat = heatLayer(this.heat, grid, risk, outside);
+  }
+
+  /**
+   * 전 세계 바탕 층 (기본 데이터로 계산한 위험도). 통로 층 밖에서만 흐리게 보입니다.
+   * 정규화 기준이 통로 층과 달라서 같은 곳의 색이 다를 수 있으므로 통로 범위는 비워 둡니다.
+   */
+  setWorldRisk(grid, risk) {
+    this.worldHeat = risk ? heatLayer(this.worldHeat, grid, risk) : null;
+    this.requestRedraw();
+  }
+
+  /** 전 세계 바탕 층 켜기/끄기 */
+  setShowWorld(on) {
+    this.showWorld = on;
+    this.requestRedraw();
   }
 
   /**
@@ -294,17 +320,36 @@ export class MapView {
     return out;
   }
 
-  _drawHeat() {
-    const h = this.heat;
-    if (!h || h.lon0 === undefined) return;
-    const { ctx } = this;
-    ctx.imageSmoothingEnabled = true;
-    ctx.imageSmoothingQuality = 'high';
-    const x0 = this.x(h.lon0);
-    const x1 = this.x(h.lon1);
+  /** 히트맵 층이 화면에 놓일 사각형 (경도 shift만큼 옮김) */
+  _heatRect(h, shift = 0) {
+    const x0 = this.x(h.lon0 + shift);
+    const x1 = this.x(h.lon1 + shift);
     const yTop = this.height / 2 - (h.y1 - this.view.y) * this.view.scale;
     const yBot = this.height / 2 - (h.y0 - this.view.y) * this.view.scale;
-    ctx.drawImage(h.canvas, x0, yTop, x1 - x0, yBot - yTop);
+    return [x0, yTop, x1 - x0, yBot - yTop];
+  }
+
+  _drawHeat() {
+    const { ctx } = this;
+    const h = this.heat?.lon0 !== undefined ? this.heat : null;
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = 'high';
+
+    const w = this.worldHeat;
+    if (w && this.showWorld) {
+      ctx.save();
+      if (h) {
+        // 통로 층 자리는 비움 (화면 전체 − 통로 사각형, evenodd)
+        const clip = new Path2D();
+        clip.rect(0, 0, this.width, this.height);
+        clip.rect(...this._heatRect(h));
+        ctx.clip(clip, 'evenodd');
+      }
+      ctx.globalAlpha = WORLD_HEAT_ALPHA;
+      for (const shift of this._shifts(w.lon0, w.lon1)) ctx.drawImage(w.canvas, ...this._heatRect(w, shift));
+      ctx.restore();
+    }
+    if (h) ctx.drawImage(h.canvas, ...this._heatRect(h));
   }
 
   _drawLand() {

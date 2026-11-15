@@ -150,7 +150,7 @@ export function carvePassages(grid, mask, passages = PASSAGES) {
 /**
  * 1단계용 전 세계 격자 (0.25°, 동서가 이어짐).
  * 칸마다 가로선 4개로 육지 길이를 재서 바다 비율을 구하고, COARSE_WATER_MIN 이상이면 바다.
- * @returns {{grid: Grid, blocked: Uint8Array, comp: Int32Array}}
+ * @returns {{grid: Grid, blocked: Uint8Array, land: Uint8Array, comp: Int32Array}}
  */
 export function buildWorldGrid(land) {
   const nx = Math.round(360 / COARSE_DEG);
@@ -176,6 +176,8 @@ export function buildWorldGrid(land) {
   const maxLand = SUB * COARSE_DEG * (1 - COARSE_WATER_MIN);
   for (let k = 0; k < grid.n; k++) blocked[k] = landDeg[k] > maxLand ? 1 : 0;
   carvePassages(grid, blocked);
+  // 전 세계 위험도 바탕 층용 육지 마스크 (결빙 구역은 막지 않음)
+  const landMask = blocked.slice();
   // 북극해 결빙 구역
   for (let j = 0; j < ny; j++) {
     if (grid.latOf(j) < ARCTIC_ICE.lat) continue;
@@ -184,7 +186,7 @@ export function buildWorldGrid(land) {
       if (lon < ARCTIC_ICE.openLon[0] || lon > ARCTIC_ICE.openLon[1]) blocked[j * nx + i] = 1;
     }
   }
-  return { grid, blocked, comp: labelComponents(grid, blocked) };
+  return { grid, blocked, land: landMask, comp: labelComponents(grid, blocked) };
 }
 
 /**

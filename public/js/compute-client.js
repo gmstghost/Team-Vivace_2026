@@ -28,7 +28,7 @@ export class ComputeClient {
     return new Promise((resolve, reject) => {
       // Keep the newest queued input; an active calculation finishes in isolation.
       this.queue = this.queue.filter(job => {
-        const superseded = job.type === type || (type === 'region' && job.type !== 'init') || (type === 'density' && job.type === 'compute');
+        const superseded = job.type === type || (type === 'region' && job.type !== 'init' && job.type !== 'world-density') || (type === 'density' && job.type === 'compute');
         if (superseded) {
           this.pending.get(job.id).reject(new Error('STALE'));
           this.pending.delete(job.id);
