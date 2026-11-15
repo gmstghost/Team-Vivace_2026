@@ -2,7 +2,9 @@
  * 캔버스 해도: 위험도 히트맵, 경위선, 출현 기록, 육지, 항로, 항구, 축척.
  *
  * 메르카토르 도법 (항해용 해도와 같은 도법)으로 그리고, 휠·드래그·두 손가락으로 확대·이동합니다.
- * 경도는 '펼친 경도'(날짜변경선을 넘으면 180 이상)를 그대로 쓰고, 육지는 ±360 사본을 함께 그립니다.
+ * 경도는 '펼친 경도'(날짜변경선을 넘으면 180 이상)를 그대로 씁니다.
+ * 지도는 경도 360° 한 장만 보여 줍니다 (반복해서 이어 붙이지 않음).
+ * 기본은 -180~180°이고, 항로가 날짜변경선을 넘으면 항로 가운데를 중심으로 한 360° 한 장으로 바꿉니다.
  */
 import { formatLat, formatLon } from '../model/geo.js';
 import { KM_PER_DEG_LON } from '../model/config.js';
@@ -69,6 +71,8 @@ export class MapView {
     this.dpr = 1;
     /** 화면 중심 (펼친 경도, 메르카토르 y)과 확대 비율 (화면 px / 도) */
     this.view = { lon: 130, y: mercY(36.7), scale: 200 };
+    /** 지도 한 장의 왼쪽 끝 경도 (오른쪽 끝 = 왼쪽 끝 + 360) */
+    this.worldLon0 = -180;
     this.scene = null;
     this.landFill = null;
     this.landStroke = null;
@@ -197,6 +201,8 @@ export class MapView {
 
   /** 범위가 화면에 다 들어오게 맞춤. 위쪽은 좌표 표시, 오른쪽은 확대 버튼 자리를 비움 */
   fitBounds({ lon0, lon1, lat0, lat1 }, pad = { top: 64, right: 60, bottom: 44, left: 44 }) {
+    // 범위가 -180~180 안이면 보통 세계지도, 날짜변경선을 넘으면 범위 가운데를 중심으로 한 한 장
+    this.worldLon0 = lon0 >= -180 && lon1 <= 180 ? -180 : (lon0 + lon1) / 2 - 180;
     const ya = mercY(lat0);
     const yb = mercY(lat1);
     const w = Math.max(40, this.width - pad.left - pad.right);
@@ -224,13 +230,18 @@ export class MapView {
   }
 
   _clampScale(s) {
-    return Math.min(4000, Math.max(this.width / 720, s));
+    // 가장 많이 축소해도 지도 한 장(360°)이 화면 너비를 꽉 채우는 정도까지만
+    return Math.min(4000, Math.max(this.width / 360, s));
   }
 
   _clampView() {
     const half = this.height / 2 / this.view.scale;
     const top = mercY(MAX_LAT);
     this.view.y = half >= top ? 0 : Math.min(top - half, Math.max(-top + half, this.view.y));
+    // 좌우로도 지도 한 장 밖으로 나가지 않게
+    const halfW = this.width / 2 / this.view.scale;
+    const w0 = this.worldLon0;
+    this.view.lon = halfW >= 180 ? w0 + 180 : Math.min(w0 + 360 - halfW, Math.max(w0 + halfW, this.view.lon));
   }
 
   /** 부모 너비에 맞추고 높이는 너비 비례 (최소·최대 제한) */
@@ -266,6 +277,12 @@ export class MapView {
     ctx.fillRect(0, 0, W, H);
     const s = this.scene;
 
+    // 지도 한 장 바깥은 그리지 않음
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(this.x(this.worldLon0), 0, 360 * this.view.scale, H);
+    ctx.clip();
+
     this._drawHeat();
     this._drawGraticule();
     if (s?.showPoints) this._drawPoints(s.points);
@@ -276,15 +293,25 @@ export class MapView {
       this._drawRoutes(s.shortestPath, s.safePath);
       this._drawEnds(s);
     }
+    ctx.restore();
     this._drawScaleBar();
   }
 
-  /** 화면에 보이는 경도 범위를 덮는 ±360 사본 목록 */
-  _shifts(lon0 = -180, lon1 = 180) {
-    const { lon0: v0, lon1: v1 } = this.visibleBounds();
+  /**
+   * 지도 한 장(worldLon0 ~ +360)을 채우는 데 필요한 육지 사본 위치.
+   * 한 장이 -180~180이면 사본 하나, 날짜변경선을 넘는 한 장이면 양쪽 조각 두 개 (겹치는 부분은 잘라 냄).
+   */
+  _shifts() {
+    const w0 = this.worldLon0;
     const out = [];
-    for (let k = Math.floor((v0 - lon1) / 360); k <= Math.ceil((v1 - lon0) / 360); k++) out.push(k * 360);
+    for (let k = Math.floor((w0 - 180) / 360) + 1; k * 360 - 180 < w0 + 360; k++) out.push(k * 360);
     return out;
+  }
+
+  /** 경도를 지도 한 장 안의 값으로 */
+  _inWorld(lon) {
+    const w0 = this.worldLon0;
+    return w0 + ((((lon - w0) % 360) + 360) % 360);
   }
 
   _drawHeat() {
@@ -385,20 +412,18 @@ export class MapView {
     const { ctx, width: W, height: H } = this;
     const b = this.visibleBounds();
     ctx.fillStyle = this.colors.sonar;
-    for (const shift of this._shifts()) {
-      for (const p of this.ports) {
-        if (!all && !p.major) continue;
-        const lon = p.lon + shift;
-        if (lon < b.lon0 || lon > b.lon1 || p.lat < b.lat0 || p.lat > b.lat1) continue;
-        const x = this.x(lon);
-        const y = this.y(p.lat);
-        if (x < 0 || y < 0 || x > W || y > H) continue;
-        ctx.globalAlpha = p.major ? 0.9 : 0.55;
-        ctx.beginPath();
-        ctx.arc(x, y, p.major ? 2.6 : 1.8, 0, Math.PI * 2);
-        ctx.fill();
-        this._drawnPorts.push({ p, x, y });
-      }
+    for (const p of this.ports) {
+      if (!all && !p.major) continue;
+      const lon = this._inWorld(p.lon);
+      if (lon < b.lon0 || lon > b.lon1 || p.lat < b.lat0 || p.lat > b.lat1) continue;
+      const x = this.x(lon);
+      const y = this.y(p.lat);
+      if (x < 0 || y < 0 || x > W || y > H) continue;
+      ctx.globalAlpha = p.major ? 0.9 : 0.55;
+      ctx.beginPath();
+      ctx.arc(x, y, p.major ? 2.6 : 1.8, 0, Math.PI * 2);
+      ctx.fill();
+      this._drawnPorts.push({ p, x, y });
     }
     ctx.globalAlpha = 1;
   }
