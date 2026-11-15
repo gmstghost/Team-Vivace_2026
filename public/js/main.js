@@ -36,7 +36,7 @@ const state = {
   temp: 15,
   noise: 50,
   optimalTemp: 15,
-  weight: 6,
+  weight: 12,
   from: null,          // 출발 항구
   to: null,            // 도착 항구
   region: null,        // planRegion() 결과 (해역 격자, 기존 항로)
@@ -57,6 +57,18 @@ const state = {
 const data = { land: null, world: null, ports: [], portById: new Map(), baseline: null };
 
 const mapView = new MapView($('map'), { onPortClick: showPortPopup, onHover: showReadout });
+const darkMode = $('darkMode');
+darkMode.checked = localStorage.getItem('safe-route-theme') === 'dark';
+function applyTheme() {
+  document.documentElement.dataset.theme = darkMode.checked ? 'dark' : 'light';
+  mapView.updateColors();
+}
+applyTheme();
+darkMode.addEventListener('change', () => {
+  applyTheme();
+  localStorage.setItem('safe-route-theme', document.documentElement.dataset.theme);
+});
+
 // ---------- 계산 → 화면 ----------
 let computeVersion = 0;
 let densityVersion = 0;
@@ -563,4 +575,3 @@ async function start() {
   await setRoute(state.from || portById(DEFAULT_ROUTE.from), state.to || portById(DEFAULT_ROUTE.to));
 }
 start();
-

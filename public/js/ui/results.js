@@ -41,11 +41,12 @@ export function renderResults(old, ai) {
   setBar('bHOld', highOld, highMax, `${highOld.toFixed(0)}%`);
   setBar('bHAi', highAi, highMax, `${highAi.toFixed(0)}%`);
 
-  // 막대: 총 이동 거리 (기존 = 100%)
-  const distAi = (ai.km / old.km) * 100;
-  const distMax = Math.max(distAi, 100);
-  setBar('bDOld', 100, distMax, '100%');
-  setBar('bDAi', distAi, distMax, `${distAi.toFixed(0)}%`);
+  const extraDistance = Math.max(0, ai.km - old.km);
+  $('distanceExtra').textContent = '+' + fmtKm(extraDistance) + ' km';
+  $('distanceExtraPct').textContent = '(+' + Math.max(0, pctChange(ai.km, old.km)).toFixed(1) + '%)';
+  $('avoidanceRate').textContent = old.highKm > 0.05
+    ? Math.max(0, (1 - ai.highKm / old.highKm) * 100).toFixed(0) + '%'
+    : '해당 없음';
 
   // 요약 문장
   const headline = $('headline');
@@ -67,6 +68,7 @@ export function renderResults(old, ai) {
 /** 항로를 못 찾았을 때 표와 막대를 비움 */
 export function clearResults() {
   for (const id of ['dOld', 'dAi', 'dDelta', 'hOld', 'hAi', 'hDelta', 'eOld', 'eAi', 'eDelta']) $(id).textContent = '–';
-  for (const id of ['bHOld', 'bHAi', 'bDOld', 'bDAi']) setBar(id, 0, 1, '');
+  for (const id of ['bHOld', 'bHAi']) setBar(id, 0, 1, '');
+  for (const id of ['distanceExtra', 'distanceExtraPct', 'avoidanceRate']) $(id).textContent = '–';
   $('headline').textContent = '항로가 없습니다. 다른 항구를 골라 보세요.';
 }
