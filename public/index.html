@@ -54,6 +54,7 @@
     <span class="k"><span class="sw"></span>회피 항로</span>
     <span class="k">위험도 낮음 <span class="ramp"></span> 높음</span>
     <span class="k"><span class="dot"></span>생물 출현 기록</span>
+    <span class="k"><span class="gate"></span>운하·해협 입구</span>
     <label class="k" for="showWorld" title="항로 통로 밖은 전 세계 기본 데이터로 계산해 흐리게 표시합니다 (색 기준이 통로와 다름)"><input type="checkbox" id="showWorld" checked> 전 세계 위험도</label>
     <label class="k" for="showPts"><input type="checkbox" id="showPts" checked> 기록 점 보기</label>
   </div>
@@ -86,6 +87,7 @@
         </div>
         <div class="distance-extra"><span class="t">이동거리 증가량</span><div><strong id="distanceExtra">–</strong><span id="distanceExtraPct">–</span></div></div>
       </div>
+      <div class="via" id="routeVia" hidden><span class="t">경유 운하·해협</span><ul id="routeViaList"></ul></div>
       <p class="hint">민감 구역은 위험도 0.5 이상인 바다입니다. 회피율은 기존 항로 대비 민감 구역 통과 거리 감소율이며, 항구 주변이나 좁은 해협에서는 완전 회피가 어려울 수 있습니다. 누적 위험 노출은 지나간 거리마다 위험도를 곱해 더한 값입니다.</p>
     </section>
 
@@ -131,7 +133,7 @@
         <div class="step"><span class="n">2단계 · 위험도</span><h3>수온으로 민감도를 보정합니다</h3>
           <p><code>위험도 = 서식 밀도 × (0.4 + 0.6 × e^−((수온 − 적정)/5)²)</code><br>수온이 산란 적정 수온과 같으면 서식 밀도가 그대로 위험도가 되고, 멀어지면 최대 60% 낮아집니다.</p></div>
         <div class="step"><span class="n">3단계 · 항로</span><h3>A*로 비용이 가장 작은 길을 찾습니다</h3>
-          <p><code>비용 = 거리 × (1 + 가중치 × 회피 비용)</code><br><code>가중치 = 회피 가중치 × (0.5 + 1.5 × 소음)</code><br>회피 비용은 위험도에 민감 구역 통과 벌점 16을 더합니다. 위험도 0.3~0.5 구간에도 최대 3의 완충 비용을 적용합니다. 가중치 0이면 최단 항로를 사용합니다.</p></div>
+          <p><code>비용 = 거리 × (1 + 해안 이격 비용 + 가중치 × 회피 비용)</code><br><code>가중치 = 회피 가중치 × (0.5 + 1.5 × 소음)</code><br>회피 비용은 위험도에 민감 구역 통과 벌점 16을 더합니다. 위험도 0.3~0.5 구간에도 최대 3의 완충 비용을 적용합니다. 가중치 0이면 최단 항로를 사용합니다. 해안 이격 비용은 육지 40 km 안쪽 바다에서 해안에 가까울수록 커져(최대 1.5) 두 항로 모두 해안에 바짝 붙지 않게 합니다.</p></div>
       </div></details>
 
       <details class="hardware">

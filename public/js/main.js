@@ -99,9 +99,10 @@ async function recompute() {
     applyWorldRisk();
     mapView.draw({ points: visiblePoints(), showPoints: $('showPts').checked,
       shortestPath: shortest.path, safePath: safe.path,
+      via: [...new Set([...shortest.via, ...safe.via])],
       from: { port: state.from, pt: region.fromPt }, to: { port: state.to, pt: region.toPt },
     });
-    renderResults(shortest.metrics, safe.metrics);
+    renderResults(shortest.metrics, safe.metrics, shortest.via, safe.via);
     document.dispatchEvent(new CustomEvent('route-results', { detail: { shortest: shortest.metrics, safe: safe.metrics } }));
   } catch (error) {
     if (version === computeVersion && error.message !== 'STALE') setRouteMsg('계산 오류: ' + error.message, 'err');

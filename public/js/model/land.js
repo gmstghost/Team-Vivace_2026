@@ -5,7 +5,7 @@
  * 바깥 고리는 반시계, 구멍(호수 등)은 시계 방향이라 'nonzero' 규칙으로 칠합니다:
  * 어떤 점에서 왼쪽으로 고리를 몇 번 감는지(winding) 세어 0이 아니면 육지.
  */
-import { COARSE_DEG, COARSE_WATER_MIN, LAT_MIN, LAT_MAX, ARCTIC_ICE, PASSAGES } from './config.js';
+import { COARSE_DEG, COARSE_WATER_MIN, LAT_MIN, LAT_MAX, ARCTIC_ICE, PASSAGES, SHORE } from './config.js';
 import { Grid, labelComponents } from './grid.js';
 import { haversineKm } from './geo.js';
 
@@ -148,6 +148,65 @@ export function carvePassages(grid, mask, passages = PASSAGES) {
 }
 
 /**
+ * 칸마다 가장 가까운 육지 칸까지 거리 (km, 3×3 챔퍼 거리 변환 두 번 훑기).
+ * maxKm 넘는 값은 maxKm으로 자름. 경도 방향 이어짐(wrap)은 무시합니다 (날짜변경선 근처 오차 작음).
+ */
+export function shoreDistanceKm(grid, land, maxKm = SHORE.km) {
+  const { nx, ny, rowWidthKm, cellHeightKm } = grid;
+  const d = new Float32Array(grid.n);
+  for (let k = 0; k < grid.n; k++) d[k] = land[k] ? 0 : maxKm;
+  const dy = cellHeightKm;
+  // 앞으로 훑기: 아래 행과 왼쪽 칸에서
+  for (let j = 0; j < ny; j++) {
+    const dx = rowWidthKm[j];
+    const dd = Math.hypot(dx, dy);
+    for (let i = 0; i < nx; i++) {
+      const k = j * nx + i;
+      let v = d[k];
+      if (v === 0) continue;
+      if (i > 0) v = Math.min(v, d[k - 1] + dx);
+      if (j > 0) {
+        const b = k - nx;
+        v = Math.min(v, d[b] + dy);
+        if (i > 0) v = Math.min(v, d[b - 1] + dd);
+        if (i < nx - 1) v = Math.min(v, d[b + 1] + dd);
+      }
+      d[k] = v;
+    }
+  }
+  // 뒤로 훑기: 위 행과 오른쪽 칸에서
+  for (let j = ny - 1; j >= 0; j--) {
+    const dx = rowWidthKm[j];
+    const dd = Math.hypot(dx, dy);
+    for (let i = nx - 1; i >= 0; i--) {
+      const k = j * nx + i;
+      let v = d[k];
+      if (v === 0) continue;
+      if (i < nx - 1) v = Math.min(v, d[k + 1] + dx);
+      if (j < ny - 1) {
+        const t = k + nx;
+        v = Math.min(v, d[t] + dy);
+        if (i > 0) v = Math.min(v, d[t - 1] + dd);
+        if (i < nx - 1) v = Math.min(v, d[t + 1] + dd);
+      }
+      d[k] = v;
+    }
+  }
+  return d;
+}
+
+/** 해안 이격 비용: 해안 바로 옆 SHORE.penalty → SHORE.km 밖 0 (config.js SHORE) */
+export function shoreCost(grid, land) {
+  const d = shoreDistanceKm(grid, land);
+  const cost = new Float32Array(grid.n);
+  for (let k = 0; k < grid.n; k++) {
+    const t = Math.max(0, 1 - d[k] / SHORE.km);
+    cost[k] = SHORE.penalty * t * t;
+  }
+  return cost;
+}
+
+/**
  * 1단계용 전 세계 격자 (0.25°, 동서가 이어짐).
  * 칸마다 가로선 4개로 육지 길이를 재서 바다 비율을 구하고, COARSE_WATER_MIN 이상이면 바다.
  * @returns {{grid: Grid, blocked: Uint8Array, land: Uint8Array, comp: Int32Array}}
@@ -186,7 +245,7 @@ export function buildWorldGrid(land) {
       if (lon < ARCTIC_ICE.openLon[0] || lon > ARCTIC_ICE.openLon[1]) blocked[j * nx + i] = 1;
     }
   }
-  return { grid, blocked, land: landMask, comp: labelComponents(grid, blocked) };
+  return { grid, blocked, land: landMask, shore: shoreCost(grid, landMask), comp: labelComponents(grid, blocked) };
 }
 
 /**

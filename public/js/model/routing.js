@@ -9,9 +9,9 @@
  * 이 파일과 model/ 폴더의 다른 파일은 화면(DOM)을 전혀 건드리지 않습니다.
  * 같은 입력이면 항상 같은 결과가 나오는 순수 계산이라 Node에서 따로 테스트할 수 있습니다.
  */
-import { HIGH_RISK, CORRIDOR, FINE, FINE_LAT_LIMIT, SNAP_KM, SNAP_MAX_KM, COARSE_SNAP_KM, STRAIGHT_MAX_KM, KM_PER_DEG_LAT, KM_PER_DEG_LON } from './config.js';
+import { HIGH_RISK, PASSAGES, CORRIDOR, FINE, FINE_LAT_LIMIT, SNAP_KM, SNAP_MAX_KM, COARSE_SNAP_KM, STRAIGHT_MAX_KM, KM_PER_DEG_LAT, KM_PER_DEG_LON } from './config.js';
 import { Grid, labelComponents } from './grid.js';
-import { rasterizeLand, carvePassages, openCellsNear } from './land.js';
+import { rasterizeLand, carvePassages, openCellsNear, shoreCost } from './land.js';
 import { haversineKm, polylineKm, unwrapPath } from './geo.js';
 import { computeRisk } from './density.js';
 import { astar } from './pathfinding.js';
@@ -81,10 +81,73 @@ function isStraightClear(grid, blocked, a, b) {
   return true;
 }
 
+/** 점 p에서 선분 ab까지 거리 (도, 경도는 cos(위도)로 줄여서 잼) */
+function segDistDeg(p, a, b) {
+  const c = Math.cos((p[1] * Math.PI) / 180);
+  const ax = (a[0] - p[0]) * c, ay = a[1] - p[1];
+  const bx = (b[0] - p[0]) * c, by = b[1] - p[1];
+  const dx = bx - ax, dy = by - ay;
+  const len2 = dx * dx + dy * dy;
+  const t = len2 ? Math.max(0, Math.min(1, -(ax * dx + ay * dy) / len2)) : 0;
+  return Math.hypot(ax + t * dx, ay + t * dy);
+}
+
+/**
+ * 운하·해협을 지나는 부분을 PASSAGES 중심선으로 바꿈.
+ * 격자 칸(최대 0.15° ≈ 16 km)이 운하 폭(수백 m)보다 훨씬 커서, 칸 중심을 이은 경로는
+ * 뚫어 둔 칸 안에서 좌우로 흔들려 지도에서 운하 옆 육지 위로 지나가 보입니다.
+ * 경로가 중심선 한쪽 끝 근처에서 들어와 반대쪽 끝 근처로 나갈 때만 바꿉니다.
+ * used 배열을 넘기면 바꾼 운하·해협 이름을 담아 줍니다.
+ */
+export function snapToPassages(path, grid, used = null, passages = PASSAGES) {
+  const tol = Math.max(0.03, grid.cellDeg * 2);
+  const midLon = (grid.lon0 + grid.lon1) / 2;
+  let out = path;
+  const firstPt = new Map(); // 이름 → 경로에 넣은 중심선의 첫 점 (항로 순서로 정렬용)
+  for (const { name, path: raw } of passages) {
+    const shift = Math.round((midLon - raw[0][0]) / 360) * 360;
+    const line = raw.map(([lon, lat]) => [lon + shift, lat]);
+    const near = (p) => {
+      for (let s = 1; s < line.length; s++) if (segDistDeg(p, line[s - 1], line[s]) <= tol) return true;
+      return false;
+    };
+    const head = line[0];
+    const tail = line[line.length - 1];
+    const result = [];
+    let i = 0;
+    while (i < out.length) {
+      if (!near(out[i])) { result.push(out[i++]); continue; }
+      let j = i;
+      while (j + 1 < out.length && near(out[j + 1])) j++;
+      const a = out[i];
+      const b = out[j];
+      const close = (p, q) => segDistDeg(p, q, q) <= tol * 1.5;
+      // 출발·도착점은 그대로 두고, 운하를 끝까지 지나갈 때만 바꿈
+      const inner = i > 0 && j < out.length - 1;
+      const forward = inner && close(a, head) && close(b, tail);
+      const backward = !forward && inner && close(a, tail) && close(b, head);
+      if (forward) result.push(...line);
+      else if (backward) result.push(...line.slice().reverse());
+      else result.push(...out.slice(i, j + 1));
+      if (forward || backward) firstPt.set(name, result[result.length - line.length]);
+      i = j + 1;
+    }
+    out = result;
+  }
+  if (used) {
+    const order = new Map(out.map((p, i) => [p, i]));
+    for (const name of [...firstPt.keys()].sort((a, b) => order.get(firstPt.get(a)) - order.get(firstPt.get(b)))) {
+      if (!used.includes(name)) used.push(name);
+    }
+  }
+  return out;
+}
+
 /**
  * @typedef {Object} Region  항로 하나를 위한 해역
  * @property {Grid} grid            통로를 덮는 촘촘한 격자 (펼친 경도)
  * @property {Uint8Array} land      1 = 육지
+ * @property {Float32Array} shore   칸별 해안 이격 비용 (land.js shoreCost)
  * @property {Uint8Array} blocked   1 = 지나갈 수 없음 (육지 또는 통로 밖)
  * @property {Uint8Array} outside   1 = 통로 밖 바다 (화면 표시용)
  * @property {number} start         출발 칸
@@ -92,6 +155,7 @@ function isStraightClear(grid, blocked, a, b) {
  * @property {number[]} fromPt      출발 항구 [경도, 위도] (격자와 같은 펼친 경도)
  * @property {number[]} toPt        도착 항구
  * @property {number[][]} shortestPath 기존 항로 (위험 무시, 최단)
+ * @property {string[]} shortestVia  기존 항로가 지나는 운하·해협 이름
  * @property {number} corridorKm    통로 반경
  * @property {{lon0: number, lon1: number, lat0: number, lat1: number}} bounds
  */
@@ -114,7 +178,7 @@ export function planRegion(world, land, from, to) {
   // 2단계에서 통로가 끊기면 끊긴 곳의 1단계 칸을 막고 다시 찾습니다.
   let worldBlocked = world.blocked;
   for (let attempt = 0; attempt < MAX_REPAIRS; attempt++) {
-    const coarse = astar(world.grid, worldBlocked, pair.start, pair.goal);
+    const coarse = astar(world.grid, worldBlocked, pair.start, pair.goal, { shore: world.shore });
     if (!coarse) break;
     // 출발 항구 → 1단계 경로 → 도착 항구, 날짜변경선을 넘어도 이어지게 경도를 펼침
     const guide = unwrapPath([[from.lon, from.lat], ...coarse.map((k) => world.grid.center(k)), [to.lon, to.lat]]);
@@ -177,7 +241,7 @@ function corridorRegion(land, guide) {
   const snapKm = Math.min(SNAP_MAX_KM, Math.max(SNAP_KM, 5 * grid.cellHeightKm));
   const pair = pickConnectedPair(grid, blocked, comp, fromPt, toPt, snapKm);
   return {
-    grid, land: landMask, blocked, comp, fromPt, toPt, corridorKm, snapKm,
+    grid, land: landMask, shore: shoreCost(grid, landMask), blocked, comp, fromPt, toPt, corridorKm, snapKm,
     start: pair ? pair.start : -1, goal: pair ? pair.goal : -1,
   };
 }
@@ -202,22 +266,43 @@ function findBreak({ grid, blocked, comp, fromPt, snapKm }, guide) {
   return null;
 }
 
-/** 기존 항로: 짧으면 직선(막히지 않을 때), 아니면 위험을 무시한 최단 경로 */
-function finishRegion({ grid, land, blocked, start, goal, fromPt, toPt, corridorKm }) {
+/** 경로의 해안 이격 포함 비용 (astar와 같은 기준: 거리 × (1 + 해안 이격 비용)) */
+function shorePathCost(path, grid, shore) {
+  const sampleKm = Math.max(0.5, grid.cellHeightKm / 2);
+  let cost = 0;
+  for (let i = 1; i < path.length; i++) {
+    const a = path[i - 1];
+    const b = path[i];
+    const len = haversineKm(a, b);
+    const steps = Math.max(1, Math.ceil(len / sampleKm));
+    for (let s = 0; s < steps; s++) {
+      const t = (s + 0.5) / steps;
+      const k = grid.cellOf(a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t);
+      cost += (len / steps) * (1 + (k >= 0 ? shore[k] : 0));
+    }
+  }
+  return cost;
+}
+
+/**
+ * 기존 항로: 위험은 무시하고 해안 이격만 지키는 최단 경로.
+ * 짧은 항로는 직선이 막히지 않고 비용이 더 작으면 직선을 씀.
+ */
+function finishRegion({ grid, land, shore, blocked, start, goal, fromPt, toPt, corridorKm }) {
   // 화면에서 통로 밖 바다를 흐리게 그릴 때 씀
   const outside = new Uint8Array(grid.n);
   for (let k = 0; k < grid.n; k++) outside[k] = blocked[k] && !land[k] ? 1 : 0;
   const a = grid.center(start);
   const b = grid.center(goal);
-  let shortestPath;
-  if (haversineKm(a, b) <= STRAIGHT_MAX_KM && isStraightClear(grid, blocked, a, b)) shortestPath = [a, b];
-  else {
-    const cells = astar(grid, blocked, start, goal);
-    if (!cells) throw new RouteError('통로 안에서 길을 찾지 못했습니다.');
-    shortestPath = cells.map((k) => grid.center(k));
-  }
+  const cells = astar(grid, blocked, start, goal, { shore });
+  if (!cells) throw new RouteError('통로 안에서 길을 찾지 못했습니다.');
+  let shortestPath = cells.map((k) => grid.center(k));
+  if (haversineKm(a, b) <= STRAIGHT_MAX_KM && isStraightClear(grid, blocked, a, b)
+      && shorePathCost([a, b], grid, shore) <= shorePathCost(shortestPath, grid, shore)) shortestPath = [a, b];
+  const shortestVia = [];
+  shortestPath = snapToPassages(shortestPath, grid, shortestVia);
   return {
-    grid, land, blocked, outside, start, goal, fromPt, toPt, shortestPath, corridorKm,
+    grid, land, shore, blocked, outside, start, goal, fromPt, toPt, shortestPath, shortestVia, corridorKm,
     bounds: { lon0: grid.lon0, lon1: grid.lon1, lat0: grid.lat0, lat1: grid.lat1 },
   };
 }
@@ -264,6 +349,7 @@ export function avoidanceWeight(baseWeight, noisePct) {
  *
  * @typedef {Object} Route
  * @property {number[][]} path
+ * @property {string[]} via  지나는 운하·해협 이름 (PASSAGES)
  * @property {{km: number, highKm: number, exposure: number}} metrics
  */
 
@@ -275,18 +361,19 @@ export function avoidanceWeight(baseWeight, noisePct) {
  * @returns {{risk: Float32Array, shortest: Route, safe: Route}}
  */
 export function planRoutes(region, density, params) {
-  const { grid, blocked, start, goal, shortestPath } = region;
+  const { grid, blocked, shore, start, goal, shortestPath } = region;
   const risk = computeRisk(density, params.temp, params.optimalTemp);
 
   const w = avoidanceWeight(params.weight, params.noise);
   // Penalize actual sensitive cells, not the displayed risk or threshold.
   // The buffer near HIGH_RISK discourages skimming the boundary.
   const costRisk = risk.map(r => r + (r >= HIGH_RISK ? 16 : 3 * Math.max(0, (r - 0.3) / (HIGH_RISK - 0.3))));
-  const cells = w > 0 ? astar(grid, blocked, start, goal, { weight: w, risk: costRisk }) : null;
-  const safePath = cells ? cells.map((k) => grid.center(k)) : shortestPath;
+  const cells = w > 0 ? astar(grid, blocked, start, goal, { weight: w, risk: costRisk, shore }) : null;
+  const safeVia = cells ? [] : region.shortestVia;
+  const safePath = cells ? snapToPassages(cells.map((k) => grid.center(k)), grid, safeVia) : shortestPath;
 
-  const shortest = { path: shortestPath, metrics: measureRoute(shortestPath, grid, risk) };
-  let safe = { path: safePath, metrics: measureRoute(safePath, grid, risk) };
+  const shortest = { path: shortestPath, via: region.shortestVia, metrics: measureRoute(shortestPath, grid, risk) };
+  let safe = { path: safePath, via: safeVia, metrics: measureRoute(safePath, grid, risk) };
   // 격자 오차로 AI 항로가 최단보다 짧게 나오는 일 방지
   if (safe.metrics.km < shortest.metrics.km || safe.metrics.highKm > shortest.metrics.highKm + 0.01) safe = shortest;
 

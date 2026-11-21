@@ -4,8 +4,8 @@
  * 메르카토르 도법 (항해용 해도와 같은 도법)으로 그리고, 휠·드래그·두 손가락으로 확대·이동합니다.
  * 경도를 펼쳐 날짜변경선을 지나는 항로와 반복되는 세계 지도를 표시합니다.
  */
-import { formatLat, formatLon } from '../model/geo.js';
-import { KM_PER_DEG_LON } from '../model/config.js';
+import { formatLat, formatLon, polylineKm } from '../model/geo.js';
+import { KM_PER_DEG_LON, PASSAGES } from '../model/config.js';
 import { portLabel } from '../model/ports.js';
 
 /** 위험도 → RGBA 색 구간 [위치, R, G, B, 불투명도] */
@@ -168,6 +168,9 @@ export class MapView {
     }
     this.landFill = new Path2D(fill.join(''));
     this.landStroke = new Path2D(stroke.join(''));
+    // 해안선 데이터에 없는 운하(수에즈·파나마·킬)는 육지 위에 물길로 덧그림
+    this.canalStroke = new Path2D(PASSAGES.filter((c) => c.canal)
+      .map(({ path }) => `M${path.map(([lon, lat]) => `${f(lon)} ${f(mercY(lat))}`).join('L')}`).join(''));
     this.redraw();
   }
 
@@ -202,6 +205,7 @@ export class MapView {
    * @param {boolean} scene.showPoints
    * @param {number[][]} scene.shortestPath 기존 항로
    * @param {number[][]} scene.safePath     AI 추천 항로
+   * @param {string[]} [scene.via]       항로가 지나는 운하·해협 이름 (PASSAGES)
    * @param {{port: Object, pt: number[]}} scene.from 출발 항구와 펼친 좌표
    * @param {{port: Object, pt: number[]}} scene.to
    */
@@ -307,8 +311,9 @@ export class MapView {
     this._drawPortDots();
     if (s) {
       this._drawRoutes(s.shortestPath, s.safePath);
+      this._drawPassages(s.via || []);
       this._drawEnds(s);
-    }
+    } else this._drawPassages([]);
     this._drawScaleBar();
   }
 
@@ -383,6 +388,13 @@ export class MapView {
       ctx.globalAlpha = 0.85;
       ctx.stroke(this.landStroke);
       ctx.globalAlpha = 1;
+      if (this.canalStroke) {
+        ctx.lineJoin = 'round';
+        ctx.lineCap = 'round';
+        ctx.strokeStyle = C.abyss;
+        ctx.lineWidth = 2.5 / view.scale;
+        ctx.stroke(this.canalStroke);
+      }
     }
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   }
@@ -491,6 +503,60 @@ export class MapView {
     this._tracePath(safePath);
     ctx.strokeStyle = C.abyss; ctx.lineWidth = 7; ctx.stroke();
     ctx.strokeStyle = C.ai; ctx.lineWidth = 3.5; ctx.stroke();
+  }
+
+  /**
+   * 운하·해협 표시: 항로가 지나는 곳은 양쪽 입구 표시와 이름·길이를 붙이고,
+   * 지나지 않는 운하는 화면에서 충분히 크게 보일 때만 이름을 흐리게 붙임.
+   */
+  _drawPassages(via) {
+    const { ctx, colors: C } = this;
+    for (const { name, canal, path } of PASSAGES) {
+      const used = via.includes(name);
+      if (!used && !canal) continue;
+      const shift = Math.round((this.view.lon - path[0][0]) / 360) * 360;
+      const pts = path.map(([lon, lat]) => [this.x(lon + shift), this.y(lat)]);
+      const xs = pts.map((p) => p[0]);
+      const ys = pts.map((p) => p[1]);
+      if (Math.max(...xs) < -50 || Math.min(...xs) > this.width + 50 || Math.max(...ys) < -50 || Math.min(...ys) > this.height + 50) continue;
+      let screenLen = 0;
+      for (let i = 1; i < pts.length; i++) screenLen += Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]);
+      if (!used && screenLen < 80) continue;
+
+      // 이름표 위치: 선 길이의 가운데
+      let acc = 0;
+      let mid = pts[0];
+      for (let i = 1; i < pts.length; i++) {
+        const d = Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]);
+        if (acc + d >= screenLen / 2) {
+          const t = d ? (screenLen / 2 - acc) / d : 0;
+          mid = [pts[i - 1][0] + (pts[i][0] - pts[i - 1][0]) * t, pts[i - 1][1] + (pts[i][1] - pts[i - 1][1]) * t];
+          break;
+        }
+        acc += d;
+      }
+
+      if (used) {
+        // 입구·출구 표시 (화면에서 짧으면 가운데 하나만)
+        const marks = screenLen < 24 ? [mid] : [pts[0], pts[pts.length - 1]];
+        for (const [mx, my] of marks) {
+          ctx.beginPath();
+          ctx.arc(mx, my, 4.5, 0, Math.PI * 2);
+          ctx.fillStyle = C.abyss; ctx.fill();
+          ctx.strokeStyle = C.ink; ctx.lineWidth = 2; ctx.stroke();
+        }
+      }
+
+      const sub = `${canal ? '운하' : '해협'} · ${Math.round(polylineKm(path))} km`;
+      ctx.font = FONT_PORT;
+      const w = Math.max(ctx.measureText(name).width, 80);
+      let align = 'left';
+      let dx = 14;
+      if (mid[0] + dx + w > this.width - 8) { align = 'right'; dx = -14; }
+      const color = used ? C.ink : C.mute;
+      this._label(name, mid[0] + dx, mid[1] - 2, { align, color, font: FONT_PORT });
+      this._label(sub, mid[0] + dx, mid[1] + 12, { align, color: C.mute, font: FONT_MONO });
+    }
   }
 
   /** 출발·도착 항구 표시. 항구가 바다 칸에서 떨어져 있으면 점선으로 이어 줌 */

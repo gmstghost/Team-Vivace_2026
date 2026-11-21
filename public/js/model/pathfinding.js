@@ -1,7 +1,7 @@
 /**
  * 3단계: A* 탐색으로 위험 가중 비용이 가장 작은 항로를 찾음.
  *
- * 비용 = 거리 × (1 + 가중치 × 위험도)
+ * 비용 = 거리 × (1 + 칸 비용)   칸 비용 = 해안 이격 비용 + 가중치 × 위험도 (두 칸의 평균)
  *
  * 전 세계 1단계 격자(동서가 이어짐)와 항로별 2단계 격자에 모두 씁니다.
  */
@@ -73,10 +73,11 @@ const MOVES = [
  * @param {Uint8Array} blocked 1 = 지나갈 수 없는 칸 (육지, 통로 밖)
  * @param {number} start 출발 칸 번호
  * @param {number} goal 도착 칸 번호
- * @param {{weight?: number, risk?: Float32Array}} [opts] weight: 위험 회피 가중치 (0이면 최단 거리)
+ * @param {{weight?: number, risk?: Float32Array, shore?: Float32Array}} [opts]
+ *   weight: 위험 회피 가중치 (0이면 위험 무시), shore: 칸별 해안 이격 비용 (land.js shoreCost)
  * @returns {number[] | null} 출발→도착 칸 번호 목록, 길이 없으면 null
  */
-export function astar(grid, blocked, start, goal, { weight = 0, risk = null } = {}) {
+export function astar(grid, blocked, start, goal, { weight = 0, risk = null, shore = null } = {}) {
   const { nx, ny, n, wrap, rowWidthKm, cellHeightKm, cellDeg } = grid;
   const useRisk = weight > 0 && risk;
   const gScore = new Float64Array(n).fill(Infinity);
@@ -143,7 +144,10 @@ export function astar(grid, blocked, start, goal, { weight = 0, risk = null } = 
       const dx = (di * (rowWidthKm[cj] + rowWidthKm[nj])) / 2;
       const dy = dj * cellHeightKm;
       const distKm = Math.sqrt(dx * dx + dy * dy);
-      const step = useRisk ? distKm * (1 + (weight * (risk[cur] + risk[next])) / 2) : distKm;
+      let extra = 0;
+      if (useRisk) extra += weight * (risk[cur] + risk[next]);
+      if (shore) extra += shore[cur] + shore[next];
+      const step = distKm * (1 + extra / 2);
       const tentative = gScore[cur] + step;
       if (tentative < gScore[next]) {
         gScore[next] = tentative;

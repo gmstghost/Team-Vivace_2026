@@ -144,6 +144,7 @@ button.fav-add{border:1px dashed var(--line);background:transparent;color:var(--
 .ramp{display:inline-block;width:64px;height:6px;border-radius:2px;
   background:linear-gradient(90deg,rgba(95,208,255,.15),rgba(95,208,255,.5) 25%,#ffd65a 50%,#ff8c3c 75%,#ff4646)}
 .dot{display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--ink);opacity:.6}
+.gate{display:inline-block;width:9px;height:9px;border-radius:50%;background:var(--abyss);border:2px solid var(--ink);box-sizing:border-box}
 
 /* ---------- 오른쪽: 분석 패널 ---------- */
 .side{right:var(--gap);top:var(--gap);bottom:var(--gap);width:var(--side-w);display:flex;flex-direction:column;overflow:hidden}
@@ -199,6 +200,13 @@ td .u{color:var(--mute);font-size:9px}
 .distance-extra strong{font:600 20px var(--mono);color:var(--ink)}
 #distanceExtraPct{font:12px var(--mono);color:var(--mute)}
 .comparison>p.hint{font-size:10px}
+.via{padding-top:10px;border-top:1px solid var(--line)}
+.via .t{font-size:11px;color:var(--mute)}
+.via ul{list-style:none;margin:6px 0 0;padding:0;display:flex;flex-direction:column;gap:4px}
+.via li{display:flex;align-items:baseline;gap:8px;font-size:12.5px}
+.via li b{font-weight:600}
+.via li .k{font:11px var(--mono);color:var(--mute)}
+.via li .w{margin-left:auto;font-size:11px;color:var(--mute)}
 
 /* 접는 안내 */
 details{min-width:0}

@@ -1,6 +1,9 @@
 /**
  * '항로 비교' 영역(표, 막대, 요약 문장)을 채움.
  */
+import { PASSAGES } from '../model/config.js';
+import { polylineKm } from '../model/geo.js';
+
 const $ = (id) => document.getElementById(id);
 
 const KM_PER_NM = 1.852;
@@ -21,8 +24,10 @@ function setBar(id, value, max, text) {
 /**
  * @param {{km: number, highKm: number, exposure: number}} old 기존 항로 지표
  * @param {{km: number, highKm: number, exposure: number}} ai  AI 추천 항로 지표
+ * @param {string[]} [oldVia] 기존 항로가 지나는 운하·해협
+ * @param {string[]} [aiVia]  회피 항로가 지나는 운하·해협
  */
-export function renderResults(old, ai) {
+export function renderResults(old, ai, oldVia = [], aiVia = []) {
   // 표
   $('dOld').innerHTML = kmHtml(old.km);
   $('dAi').innerHTML = kmHtml(ai.km);
@@ -48,6 +53,8 @@ export function renderResults(old, ai) {
     ? Math.max(0, (1 - ai.highKm / old.highKm) * 100).toFixed(0) + '%'
     : '해당 없음';
 
+  renderVia(oldVia, aiVia);
+
   // 요약 문장
   const headline = $('headline');
   const extraKm = ai.km - old.km;
@@ -65,10 +72,35 @@ export function renderResults(old, ai) {
   }
 }
 
+/** 경유 운하·해협 목록 (항로에서 지나는 순서) */
+function renderVia(oldVia = [], aiVia = []) {
+  const names = [...new Set([...oldVia, ...aiVia])];
+  const box = $('routeVia');
+  box.hidden = !names.length;
+  const list = $('routeViaList');
+  list.replaceChildren(...names.map((name) => {
+    const p = PASSAGES.find((x) => x.name === name);
+    const li = document.createElement('li');
+    const b = document.createElement('b');
+    b.textContent = name;
+    const k = document.createElement('span');
+    k.className = 'k';
+    k.textContent = p ? `${p.canal ? '운하' : '해협'} · ${Math.round(polylineKm(p.path))} km` : '';
+    const w = document.createElement('span');
+    w.className = 'w';
+    const inOld = oldVia.includes(name);
+    const inAi = aiVia.includes(name);
+    w.textContent = inOld && inAi ? '두 항로 모두' : inOld ? '기존 항로만' : '회피 항로만';
+    li.append(b, k, w);
+    return li;
+  }));
+}
+
 /** 항로를 못 찾았을 때 표와 막대를 비움 */
 export function clearResults() {
   for (const id of ['dOld', 'dAi', 'dDelta', 'hOld', 'hAi', 'hDelta', 'eOld', 'eAi', 'eDelta']) $(id).textContent = '–';
   for (const id of ['bHOld', 'bHAi']) setBar(id, 0, 1, '');
   for (const id of ['distanceExtra', 'distanceExtraPct', 'avoidanceRate']) $(id).textContent = '–';
   $('headline').textContent = '항로가 없습니다. 다른 항구를 골라 보세요.';
+  renderVia();
 }
